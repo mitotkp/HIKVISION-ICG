@@ -151,7 +151,7 @@ export class cSyncService {
         // 1. Validar que tengamos datos
         if (!imageBuffer) throw new Error("El buffer de la imagen está vacío");
 
-        const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json`;
+        const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FDSearch?format=json`;
 
         // 2. Preparar el Form-Data (Hikvision exige Multipart estricto para fotos)
         const form = new FormData();

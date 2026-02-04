@@ -1,5 +1,7 @@
 import { timeStamp } from "console";
 
+let ultimoEventoRecibido = null;
+
 export class cAccessService {
 
     async processEvent(incomingData, file) {

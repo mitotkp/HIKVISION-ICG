@@ -1,20 +1,28 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { cSyncService } from './services/sync.service.js';
 import { cAccessService } from './services/access.service.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = 6065;
+
+app.use(cors());
+app.use(express.json());
+app.use(express.static('public'));
+
 const syncService = new cSyncService();
 const accessService = new cAccessService();
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-app.use(cors());
-app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, '../uploads')));
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 app.get('/api/clientes', async (req, res) => {
     try {
@@ -70,11 +78,6 @@ app.get('/api/cliente/:id/tarjetas', async (req, res) => {
     }
 });
 
-app.use('/uploads', express.static('uploads'));
-
-// ... (Tus otras rutas) ...
-
-// 2. NUEVA RUTA: Consulta de "Captura al Paso" (Local)
 app.get('/api/eventos/ultimo-local', (req, res) => {
     const evento = accessService.obtenerUltimoEvento();
     res.json(evento || {});
@@ -91,4 +94,5 @@ app.delete('/api/cliente/:id/tarjeta/:cardNo', async (req, res) => {
 
 app.listen(port, () => {
     console.log(`Servidor Web listo en http://localhost:${port}`);
+    console.log(`Carpeta uploads servida en: ${path.join(__dirname, '../uploads')}`);
 });
