@@ -1,3 +1,5 @@
+import { timeStamp } from "console";
+
 export class cAccessService {
 
     async processEvent(incomingData, file) {
@@ -36,10 +38,19 @@ export class cAccessService {
             descripcion: this._traducirEvento(Number(eventType), verifyMode),
             accesoPermitido: this._esAccesoExitoso(Number(eventType)),
 
-            fotoUrl: file ? `/uploads/${file.filename}` : 'Sin Foto'
+            fotoUrl: file ? `/uploads/${file.filename}` : null
+        };
+
+        ultimoEventoRecibido = {
+            ...accessLog,
+            timeStamp: Date.now()
         };
 
         return accessLog;
+    }
+
+    obtenerUltimoEvento() {
+        return ultimoEventoRecibido;
     }
 
     _esAccesoExitoso(codigo) {

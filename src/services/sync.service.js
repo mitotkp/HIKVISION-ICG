@@ -303,154 +303,102 @@ export class cSyncService {
     }
 
     /**
-     * Espera a que aparezca un evento de "Rostro Desconocido" (Código 76)
-     * que sea DIFERENTE a la última foto registrada.
-     */
-    async esperarNuevoEvento() {
-        console.log("⏳ Buscando rostro desconocido (Code 76)...");
-
-        // 1. Memorizamos la última foto de un desconocido (para saber si cambia)
-        let ultimaFotoConocida = null;
-        try {
-            const historial = await this.obtenerUltimosEventos();
-            // Filtramos solo los eventos 76 (Desconocidos)
-            const desconocidos = historial.filter(e => e.minor === 76);
-            if (desconocidos.length > 0) {
-                ultimaFotoConocida = desconocidos[0].pictureURL;
-            }
-        } catch (e) { }
-
-        const intentosMaximos = 20; // 40 segundos de espera
-
-        for (let i = 0; i < intentosMaximos; i++) {
-            // Esperamos 2 segundos
-            await new Promise(r => setTimeout(r, 2000));
-
-            try {
-                // 2. Buscamos eventos recientes
-                const eventos = await this.obtenerUltimosEventos();
-
-                // 3. FILTRO MAESTRO: Solo nos interesa el código 76
-                const eventosDesconocidos = eventos.filter(e => e.minor === 76);
-
-                if (eventosDesconocidos.length > 0) {
-                    const eventoCandidato = eventosDesconocidos[0]; // El más nuevo
-
-                    // 4. COMPARACIÓN: ¿Es una foto nueva?
-                    // Si no teníamos referencia anterior, asumimos que este es el nuevo
-                    // Si teníamos referencia, validamos que la URL sea distinta
-                    if (eventoCandidato.pictureURL !== ultimaFotoConocida) {
-                        console.log(`📸 ¡Captura exitosa! Rostro desconocido detectado: ${eventoCandidato.time}`);
-                        return eventoCandidato;
-                    }
-                }
-            } catch (e) {
-                console.warn(`   Intento ${i + 1}:`, e.message);
-            }
-        }
-
-        throw new Error("Tiempo agotado. No se detectó ningún rostro desconocido nuevo.");
-    }
-
-    /**
-     * Busca los últimos eventos de acceso (fichajes) del día que tengan foto.
-     * Endpoint: POST /ISAPI/AccessControl/AcsEvent/Search
+     * Busca historial con rango de fecha AMPLIO para evitar errores de reloj.
      */
     async obtenerUltimosEventos() {
-        console.log("🔍 Buscando historial de eventos con foto...");
-        const targetUrl = `${this.baseUrl}/ISAPI/AccessControl/AcsEvent/Search?format=json`;
-
-        // 1. Calcular rango de tiempo (Desde las 00:00 de hoy hasta mañana)
-        const hoy = new Date();
-        const inicio = new Date(hoy.setHours(0, 0, 0, 0)).toISOString().split('.')[0] + "-05:00"; // Ajusta tu zona horaria si es necesario
-        const fin = new Date(hoy.setHours(23, 59, 59, 999)).toISOString().split('.')[0] + "-05:00";
+        // console.log("🔍 Consultando historial de eventos..."); // Debug opcional
+        const url = `${this.baseUrl}/ISAPI/AccessControl/AcsEvent/Search?format=json`;
 
         const payload = {
             AcsEventSearchDescription: {
-                searchID: "HistorialWeb_" + Date.now(), // ID único para evitar caché
+                searchID: "Search_" + Date.now(), // ID único cada vez
                 searchResultPosition: 0,
-                maxResults: 30, // Traemos los últimos 30
-                major: 0,       // 0 = Todos los tipos principales
-                minor: 0,       // 0 = Todos los subtipos (75=Pass, 76=Mismatch, etc)
-                startTime: inicio,
-                endTime: fin
+                maxResults: 30, // Traemos bastantes para asegurar
+                major: 0,
+                minor: 0,
+                // TRUCO: Rango de fecha exagerado para ignorar desincronización de hora
+                startTime: "2020-01-01T00:00:00-05:00",
+                endTime: "2030-12-31T23:59:59-05:00"
             }
         };
 
         try {
-            const response = await this.client.fetch(targetUrl, {
+            const res = await this.client.fetch(url, {
                 method: 'POST',
                 body: JSON.stringify(payload),
                 headers: { 'Content-Type': 'application/json' }
             });
 
-            if (!response.ok) {
-                // Si no hay eventos, Hikvision a veces devuelve error o 'NO MATCH'
-                if (response.status === 400 || response.status === 404) return [];
-                throw new Error(`Error buscando eventos: ${response.status}`);
-            }
+            if (!res.ok) return [];
 
-            const data = await response.json();
+            const data = await res.json();
+            const eventos = data.AcsEventSearch?.AcsEvent || [];
+            const lista = Array.isArray(eventos) ? eventos : [eventos];
 
-            // 2. Extraer lista de eventos (puede venir como objeto único o array)
-            const searchResult = data.AcsEventSearch || {};
-            const eventosRaw = searchResult.AcsEvent || [];
-            const listaEventos = Array.isArray(eventosRaw) ? eventosRaw : [eventosRaw];
-
-            // 3. Filtrar y limpiar datos
-            // Solo nos interesan los eventos que tengan URL de foto (pictureURL)
-            return listaEventos
-                .filter(e => e.pictureURL && e.pictureURL.length > 0)
+            // Filtramos, ordenamos y limpiamos
+            return lista
+                .filter(e => e.pictureURL) // Solo los que tienen foto
                 .map(e => ({
                     time: e.time,
-                    // Parseamos 'minor' a entero para poder filtrar por 76 (Desconocido) después
-                    minor: parseInt(e.minor, 10),
+                    minor: parseInt(e.minor, 10), // <--- IMPORTANTE: Convertir a número
                     pictureURL: e.pictureURL,
-                    name: e.name || "Desconocido",
-                    cardNo: e.cardNo
+                    name: e.name || "Desconocido"
                 }))
-                .reverse(); // Invertimos para que el más reciente quede primero (índice 0)
+                .sort((a, b) => new Date(b.time) - new Date(a.time)); // El más nuevo primero (índice 0)
 
         } catch (error) {
-            console.error("Error en obtenerUltimosEventos:", error.message);
-            // Retornamos array vacío para no romper el frontend
+            console.error("Error buscando eventos:", error.message);
             return [];
         }
     }
 
-    // Helper interno para buscar eventos desde una fecha específica
-    async _buscarEventosDesde(fechaInicioISO) {
-        const url = `${this.baseUrl}/ISAPI/AccessControl/AcsEvent/Search?format=json`;
-        const hoy = new Date();
-        const fin = new Date(hoy.setHours(23, 59, 59, 999)).toISOString().split('.')[0] + "-05:00";
+    /**
+     * Método Radar: Busca el primer evento 76 (Desconocido) que aparezca.
+     */
+    async esperarNuevoEvento() {
+        console.log("📡 Radar activado: Esperando evento 76 (Desconocido)...");
 
-        const payload = {
-            AcsEventSearchDescription: {
-                searchID: "CapturaVivo" + Date.now(), // ID único
-                searchResultPosition: 0,
-                maxResults: 5,
-                major: 0, minor: 0,
-                startTime: fechaInicioISO, // <--- CLAVE: Solo eventos desde que dimos click
-                endTime: fin
+        // 1. Guardamos la hora del evento 76 más reciente que existe AHORA (para no repetir)
+        let ultimaHoraEvento76 = "";
+        try {
+            const historial = await this.obtenerUltimosEventos();
+            const ultimo76 = historial.find(e => e.minor === 76);
+            if (ultimo76) {
+                ultimaHoraEvento76 = ultimo76.time;
+                console.log(`   (Ignorando eventos anteriores a: ${ultimaHoraEvento76})`);
             }
-        };
+        } catch (e) { }
 
-        const res = await this.client.fetch(url, {
-            method: 'POST',
-            body: JSON.stringify(payload),
-            headers: { 'Content-Type': 'application/json' }
-        });
+        const intentos = 20; // 20 intentos de 1.5s = 30 segundos aprox
 
-        const data = await res.json();
-        const eventos = data.AcsEventSearch?.AcsEvent || [];
-        const lista = Array.isArray(eventos) ? eventos : [eventos];
+        for (let i = 0; i < intentos; i++) {
+            await this._sleep(1500); // Espera 1.5 seg entre consultas
 
-        // Filtramos solo los que tienen foto válida
-        return lista.filter(e => e.pictureURL).map(e => ({
-            time: e.time,
-            pictureURL: e.pictureURL
-        })).reverse();
+            try {
+                // 2. Buscamos de nuevo
+                const eventos = await this.obtenerUltimosEventos();
+
+                // 3. Filtramos: Solo código 76
+                const eventoCandidato = eventos.find(e => e.minor === 76);
+
+                if (eventoCandidato) {
+                    // Verificamos si es NUEVO (hora distinta a la que vimos al inicio)
+                    // O si no había ninguno antes, este es el bueno.
+                    if (eventoCandidato.time !== ultimaHoraEvento76) {
+                        console.log(`📸 ¡CAPTURA EXITOSA! Evento 76 detectado a las ${eventoCandidato.time}`);
+                        console.log(`   URL: ${eventoCandidato.pictureURL}`);
+                        return eventoCandidato;
+                    }
+                }
+            } catch (e) {
+                process.stdout.write("x"); // Error de red momentáneo
+            }
+        }
+
+        throw new Error("Tiempo agotado. No se detectó un nuevo rostro desconocido.");
     }
+
+    _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
     /**
      * Elimina una tarjeta específica.

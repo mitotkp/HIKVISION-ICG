@@ -2,10 +2,13 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { cSyncService } from './services/sync.service.js';
+import { cAccessService } from './services/access.service.js';
+
 
 const app = express();
 const port = 6065;
 const syncService = new cSyncService();
+const accessService = new cAccessService();
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -67,19 +70,15 @@ app.get('/api/cliente/:id/tarjetas', async (req, res) => {
     }
 });
 
-// ...
-// 10. NUEVO: Endpoint de "Captura en Vivo" (Espera activa)
-app.get('/api/dispositivo/esperar-rostro', async (req, res) => {
-    try {
-        // Esto mantendrá la petición abierta hasta 30 segundos
-        const evento = await syncService.esperarNuevoEvento();
-        res.json(evento);
-    } catch (error) {
-        // Si nadie pasó en 30s, devolvemos 408 (Timeout)
-        res.status(408).json({ error: error.message });
-    }
+app.use('/uploads', express.static('uploads'));
+
+// ... (Tus otras rutas) ...
+
+// 2. NUEVA RUTA: Consulta de "Captura al Paso" (Local)
+app.get('/api/eventos/ultimo-local', (req, res) => {
+    const evento = accessService.obtenerUltimoEvento();
+    res.json(evento || {});
 });
-// ...
 
 app.delete('/api/cliente/:id/tarjeta/:cardNo', async (req, res) => {
     try {
