@@ -1,11 +1,11 @@
 {
   "empleadoId": "DESCONOCIDO",
   "nombre": "Desconocido",
-  "fechaHora": "4/2/2026, 10:51:27 p.m.",
+  "fechaHora": "4/2/2026, 11:06:12 p.m.",
   "puertaId": 1,
-  "codigoEvento": 28,
-  "descripcion": "EVENTO 28",
+  "codigoEvento": 76,
+  "descripcion": "DENEGADO (Rostro desconocido / Auth Fallida)",
   "accesoPermitido": false,
-  "fotoUrl": null,
-  "timestamp": 1770259887548
+  "fotoUrl": "/uploads/access-1770260772803.jpeg",
+  "timestamp": 1770260772806
 }

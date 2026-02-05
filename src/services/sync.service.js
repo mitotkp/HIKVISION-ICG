@@ -115,6 +115,43 @@ export class cSyncService {
         throw ultimoError || new Error("No se pudo subir la foto tras varios intentos.");
     }
 
+    // --- NUEVO MÉTODO: ELIMINAR ROSTRO ---
+    async eliminarRostro(userId) {
+        console.log(`🗑️ Eliminando foto del usuario ${userId}...`);
+
+        // Para borrar, actualizamos el registro (PUT) con una URL vacía
+        const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json`;
+        
+        const payload = {
+            faceURL: "", // <--- URL Vacía = Borrar Foto
+            faceLibType: "blackFD",
+            FDID: "1",
+            FPID: String(userId)
+        };
+
+        try {
+            const response = await this.client.fetch(targetUrl, {
+                method: 'PUT', // PUT para actualizar
+                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            const text = await response.text();
+            let data = {};
+            try { data = JSON.parse(text); } catch (e) {}
+
+            if (data.statusCode === 1 || data.statusString === 'OK' || text.includes('OK')) {
+                console.log(`   ✅ ¡Foto eliminada!`);
+                return { success: true };
+            } else {
+                throw new Error(data.subStatusCode || "No se pudo eliminar la foto");
+            }
+        } catch (error) {
+            console.error('Error borrando foto:', error.message);
+            throw error;
+        }
+    }
+
     // --- 2. OBTENER CLIENTES (SQL SERVER) ---
     async obtenerClientes() {
         try {

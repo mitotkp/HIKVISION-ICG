@@ -132,6 +132,35 @@ app.get('/api/proxy-image', async (req, res) => {
     }
 });
 
+// --- NUEVA RUTA: CONSULTAR SI EL CLIENTE TIENE FOTO ---
+app.get('/api/cliente/:id/foto', async (req, res) => {
+    try {
+        const userId = req.params.id;
+        // Usamos el método Radar para buscar el último evento de este usuario
+        // Si tiene foto reciente, la devolvemos
+        const eventos = await syncService.obtenerUltimosEventos();
+        
+        // Buscamos un evento (75=Conocido) que coincida con el nombre/ID del cliente
+        // Nota: Esto es una aproximación. Hikvision no tiene un endpoint directo fácil para "ver foto actual".
+        // Lo ideal es guardar la URL de la foto en tu base de datos SQL cuando la subes.
+        
+        // POR AHORA: Devolvemos 404 para que el frontend use la default.
+        // (Implementaremos la solución real en el paso 3)
+        res.status(404).json({ hasPhoto: false });
+
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- NUEVA RUTA: BORRAR FOTO ---
+app.delete('/api/cliente/:id/foto', async (req, res) => {
+    try {
+        await syncService.eliminarRostro(req.params.id);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // Endpoint: Obtener Último Evento (Captura al Paso)
 app.get('/api/eventos/ultimo-local', (req, res) => {
     const evento = accessService.obtenerUltimoEvento();
