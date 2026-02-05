@@ -7,11 +7,9 @@ import { fileURLToPath } from 'url';
 // --- CONFIGURACIÓN DE RUTAS ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// Calculamos la raíz del proyecto
 const PROJECT_ROOT = path.resolve(__dirname, '../../');
 const UPLOADS_DIR = path.join(PROJECT_ROOT, 'uploads');
 
-// Aseguramos que la carpeta uploads exista
 if (!fs.existsSync(UPLOADS_DIR)) {
     try { fs.mkdirSync(UPLOADS_DIR, { recursive: true }); } catch (e) { }
 }
@@ -19,11 +17,8 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 export class cSyncService {
 
     constructor() {
-        // -----------------------------------------------------------
-        // 1. CONFIGURACIÓN DEL DISPOSITIVO (DESTINO)
-        // -----------------------------------------------------------
         this.config = {
-            ip: '192.168.1.64', // <--- IP DE LA CÁMARA
+            ip: '192.168.1.64', // <--- VERIFICA TU IP
             user: 'admin',
             pass: 'R3d3s1pc4..'
         };
@@ -35,21 +30,17 @@ export class cSyncService {
     _formatDate(d) { return (!d || isNaN(d)) ? "2035-12-31T23:59:59" : d.toISOString().split('.')[0]; }
 
     // --- 1. SUBIR ROSTRO (MÉTODO URL / "DOWNLOAD") ---
-    // Este método evita el error 'badJsonFormat' porque no envía archivos binarios,
-    // sino que le dice a la cámara: "Descárgalo tú misma de esta URL".
-
     async subirRostro(userId, imageBuffer) {
         console.log(`📸 Procesando foto para ID: ${userId}...`);
 
         if (!imageBuffer) throw new Error("Buffer de imagen vacío");
 
-        // A) Guardar la foto temporalmente
         const fileName = `rostro_${userId}_${Date.now()}.jpg`;
         const localPath = path.join(UPLOADS_DIR, fileName);
         fs.writeFileSync(localPath, imageBuffer);
 
-        // B) Configurar URL
-        const MI_IP_PC = '192.168.1.10'; // <--- TU IP DE PC
+        // ⚠️ IMPORTANTE: Asegúrate que esta IP es la de tu PC
+        const MI_IP_PC = '192.168.1.10'; 
         const PUERTO_WEB = 6065;
         const publicFaceUrl = `http://${MI_IP_PC}:${PUERTO_WEB}/uploads/${fileName}`;
         
@@ -65,7 +56,6 @@ export class cSyncService {
             featurePointType: "face"
         };
 
-        // --- LÓGICA DE REINTENTO (LA SOLUCIÓN AL FALLO INICIAL) ---
         const MAX_INTENTOS = 2;
         let ultimoError = null;
 
@@ -83,49 +73,37 @@ export class cSyncService {
                 let data = {};
                 try { data = JSON.parse(textResponse); } catch (e) {}
 
-                // Verificar éxito
                 if (data.statusCode === 1 || data.statusString === 'OK' || textResponse.includes('"statusCode": 1')) {
-                    
-                    // Limpieza exitosa
-                    setTimeout(() => {
-                        if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
-                    }, 15000);
-
+                    setTimeout(() => { if (fs.existsSync(localPath)) fs.unlinkSync(localPath); }, 15000);
                     console.log(`   ✅ ¡ÉXITO! Foto asignada correctamente.`);
                     return { success: true };
                 } else {
-                    // Si el dispositivo responde con error, lanzamos excepción para que el catch lo agarre (o no, dependiendo del error)
-                    // Pero si es error de "Descarga", reintentar suele arreglarlo
                     throw new Error(data.subStatusCode || data.statusString || textResponse);
                 }
 
             } catch (error) {
                 console.error(`   ❌ Fallo intento ${intento}: ${error.message}`);
                 ultimoError = error;
-                
-                // Si falló, esperamos 1 segundo antes de reintentar para dar tiempo a la conexión
                 if (intento < MAX_INTENTOS) await this._sleep(1000);
             }
         }
 
-        // Si llegamos aquí, fallaron todos los intentos
-        // Borramos el archivo temporal para no dejar basura
         if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
-        
-        throw ultimoError || new Error("No se pudo subir la foto tras varios intentos.");
+        throw ultimoError || new Error("No se pudo subir la foto.");
     }
 
-    // --- NUEVO MÉTODO: VERIFICAR SI TIENE ROSTRO (BUSCAR EN DISPOSITIVO) ---
+    // --- 2. VERIFICAR SI TIENE ROSTRO (CORREGIDO) ---
     async verificarRostro(userId) {
         console.log(`🔎 Verificando rostro para ID: ${userId}...`);
         
         const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FDSearch?format=json`;
         
         const payload = {
-            FDSearchDescription: {
+            FDSearch: {
                 searchID: "SearchFace_" + Date.now(),
-                FDID: "1", // ID de librería por defecto
-                FPID: String(userId), // Buscamos por ID de usuario
+                FDID: "1", 
+                faceLibType: "blackFD", // <--- ESTO FALTABA: Especificar la librería
+                FPID: String(userId), 
                 maxResults: 10,
                 searchResultPosition: 0
             }
@@ -140,46 +118,43 @@ export class cSyncService {
 
             const data = await response.json();
 
-            // Si hay coincidencias (numOfMatches > 0), es que tiene foto
+            console.log(data)
+
+            // Si hay coincidencias
             if (data.FDSearchResult && data.FDSearchResult.numOfMatches > 0) {
                 console.log(`   ✅ El usuario ${userId} TIENE foto registrada.`);
-                // Intentamos obtener la URL si el dispositivo la devuelve
                 const match = data.FDSearchResult.MatchList[0] || {};
-                return { 
-                    hasFace: true, 
-                    // Nota: Hikvision no suele devolver la imagen completa aquí, 
-                    // pero confirmamos que existe.
-                    faceUrl: match.faceURL || null 
-                };
+                return { hasFace: true, faceUrl: match.faceURL || null };
             }
             
             console.log(`   ℹ️ El usuario ${userId} NO tiene foto.`);
             return { hasFace: false };
 
         } catch (error) {
-            // Si el dispositivo no soporta FDSearch o falla, asumimos false
             console.error('Error verificando rostro:', error.message);
             return { hasFace: false };
         }
     }
 
-    // --- NUEVO MÉTODO: ELIMINAR ROSTRO ---
+    // --- 3. ELIMINAR ROSTRO (CORREGIDO - USANDO ENDPOINT DELETE) ---
     async eliminarRostro(userId) {
         console.log(`🗑️ Eliminando foto del usuario ${userId}...`);
 
-        // Para borrar, actualizamos el registro (PUT) con una URL vacía
-        const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json`;
+        // Usamos la URL específica de borrado (Delete)
+        const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FaceDataRecord/Delete?format=json`;
         
+        // Estructura correcta para borrar un rostro específico
         const payload = {
-            faceURL: "", // <--- URL Vacía = Borrar Foto
-            faceLibType: "blackFD",
-            FDID: "1",
-            FPID: String(userId)
+            FaceDataRecordDelCond: {
+                faceLibType: "blackFD",
+                FDID: "1",
+                FPID: [String(userId)] // Generalmente espera un array de strings
+            }
         };
 
         try {
             const response = await this.client.fetch(targetUrl, {
-                method: 'PUT', // PUT para actualizar
+                method: 'PUT', // Hikvision usa PUT para enviar la orden de borrado
                 body: JSON.stringify(payload),
                 headers: { 'Content-Type': 'application/json' }
             });
@@ -189,10 +164,10 @@ export class cSyncService {
             try { data = JSON.parse(text); } catch (e) {}
 
             if (data.statusCode === 1 || data.statusString === 'OK' || text.includes('OK')) {
-                console.log(`   ✅ ¡Foto eliminada!`);
+                console.log(`   ✅ ¡Foto eliminada correctamente!`);
                 return { success: true };
             } else {
-                throw new Error(data.subStatusCode || "No se pudo eliminar la foto");
+                throw new Error(data.subStatusCode || data.statusString || "Error al eliminar");
             }
         } catch (error) {
             console.error('Error borrando foto:', error.message);
@@ -200,7 +175,7 @@ export class cSyncService {
         }
     }
 
-    // --- 2. OBTENER CLIENTES (SQL SERVER) ---
+    // --- 4. OBTENER CLIENTES ---
     async obtenerClientes() {
         try {
             const pool = await getConnection();
@@ -216,7 +191,7 @@ export class cSyncService {
         }
     }
 
-    // --- 3. ENVIAR CLIENTES MASIVO ---
+    // --- 5. ENVIAR CLIENTES MASIVO ---
     async enviarClientes(clientes) {
         console.log(`🚀 Sincronizando ${clientes.length} clientes...`);
         let exito = 0; let fallos = 0;
@@ -259,7 +234,6 @@ export class cSyncService {
                     console.log(`✅ [${index + 1}] ${idStr} -> OK.`);
                     exito++;
                 } else if (data.statusString && data.statusString.includes('duplicate')) {
-                    // Si existe, actualizamos (PUT)
                     response = await this.client.fetch(targetUrl, {
                         method: 'PUT',
                         body: JSON.stringify(jsonPayload),
@@ -286,7 +260,7 @@ export class cSyncService {
         console.log(`\n--- RESUMEN: ${exito} OK | ${fallos} Fallos ---`);
     }
 
-    // --- 4. VINCULAR TARJETA ---
+    // --- 6. VINCULAR TARJETA ---
     async vincularTarjeta(userId, cardNumber) {
         console.log(`💳 Vinculando tarjeta ${cardNumber} a ID ${userId}...`);
         const url = `${this.baseUrl}/ISAPI/AccessControl/CardInfo/Record?format=json`;
@@ -309,7 +283,7 @@ export class cSyncService {
         throw new Error(data.subStatusCode || "Error al vincular tarjeta");
     }
 
-    // --- 5. OBTENER TARJETAS ---
+    // --- 7. OBTENER TARJETAS ---
     async obtenerTarjetasDelDispositivo(userId) {
         const url = `${this.baseUrl}/ISAPI/AccessControl/CardInfo/Search?format=json`;
         const body = {
@@ -337,7 +311,7 @@ export class cSyncService {
         } catch (e) { return []; }
     }
 
-    // --- 6. ELIMINAR TARJETA ---
+    // --- 8. ELIMINAR TARJETA ---
     async eliminarTarjeta(userId, cardNo) {
         console.log(`🗑️ Eliminando tarjeta ${cardNo}...`);
         const url = `${this.baseUrl}/ISAPI/AccessControl/CardInfo/Delete?format=json`;
@@ -354,7 +328,7 @@ export class cSyncService {
         throw new Error(data.subStatusCode || "Error al eliminar");
     }
 
-    // --- 7. CAPTURA AL PASO (RADAR DE EVENTOS) ---
+    // --- 9. RADAR DE EVENTOS ---
     async obtenerUltimosEventos() {
         const url = `${this.baseUrl}/ISAPI/AccessControl/AcsEvent/Search?format=json`;
         const payload = {
@@ -390,45 +364,31 @@ export class cSyncService {
         } catch (e) { return []; }
     }
 
-    /**
-     * Método Radar Mejorado: 
-     * Detecta CUALQUIER rostro (Conocido o Desconocido) que aparezca frente a la cámara.
-     */
     async esperarNuevoEvento() {
         console.log("📡 Radar activado: Escaneando cualquier rostro reciente...");
         
         let ultimaURL = "";
-        
-        // 1. Memorizamos la foto más reciente que tenga la cámara AHORA
         try {
             const historial = await this.obtenerUltimosEventos();
-            if (historial.length > 0) {
-                ultimaURL = historial[0].pictureURL;
-            }
+            if (historial.length > 0) ultimaURL = historial[0].pictureURL;
         } catch (e) {}
 
-        const intentos = 20; // 30 segundos aprox.
+        const intentos = 20; 
 
         for (let i = 0; i < intentos; i++) {
             await this._sleep(1500);
 
             try {
-                // 2. Consultamos los eventos
                 const eventos = await this.obtenerUltimosEventos();
-                
                 if (eventos.length > 0) {
-                    const masReciente = eventos[0]; // El primero es el más nuevo
-
-                    // 3. COMPARACIÓN:
-                    // Si la foto es distinta a la que vimos al inicio... ¡Es alguien nuevo!
-                    // (No importa si es ID 3, Desconocido, o ID 50)
+                    const masReciente = eventos[0]; 
                     if (masReciente.pictureURL !== ultimaURL) {
-                        console.log(`📸 ¡CAPTURA EXITOSA! Rostro detectado: ${masReciente.name} a las ${masReciente.time}`);
+                        console.log(`📸 ¡CAPTURA EXITOSA! Rostro detectado: ${masReciente.name}`);
                         return masReciente;
                     }
                 }
             } catch (e) {
-                process.stdout.write("."); // Feedback visual simple
+                process.stdout.write(".");
             }
         }
         
