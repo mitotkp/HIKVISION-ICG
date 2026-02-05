@@ -1,11 +1,12 @@
 {
   "empleadoId": "DESCONOCIDO",
   "nombre": "Desconocido",
-  "fechaHora": "4/2/2026, 11:26:55 p.m.",
+  "fechaHora": "5/2/2026, 12:48:18 a.m.",
   "puertaId": 1,
-  "codigoEvento": 27,
-  "descripcion": "EVENTO 27",
+  "codigoEvento": 28,
+  "descripcion": "EVENTO 28",
   "accesoPermitido": false,
+  "tarjetaNumero": null,
   "fotoUrl": null,
-  "timestamp": 1770262015847
+  "timestamp": 1770266898133
 }

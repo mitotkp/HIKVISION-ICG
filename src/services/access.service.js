@@ -27,6 +27,8 @@ export class cAccessService {
         const puertaId = Number(rawDoor);
         const rawDate = info.dateTime || info.time || info.net_time;
 
+        const cardNo = info.cardNo || null; 
+
         let fecha = new Date();
         if (rawDate) fecha = new Date(rawDate);
 
@@ -40,6 +42,7 @@ export class cAccessService {
             descripcion: this._traducirEvento(Number(eventType), verifyMode),
             accesoPermitido: this._esAccesoExitoso(Number(eventType)),
             // URL de la foto (si vino alguna)
+            tarjetaNumero: cardNo, 
             fotoUrl: file ? `/uploads/${file.filename}` : null
         };
 

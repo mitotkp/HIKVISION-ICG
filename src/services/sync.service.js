@@ -135,19 +135,23 @@ export class cSyncService {
     }
 
     // --- 3. ELIMINAR ROSTRO (VERSIÓN PLANA) ---
+    // --- 3. ELIMINAR ROSTRO (CORREGIDO SEGÚN PYTHON) ---
     async eliminarRostro(userId) {
         console.log(`🗑️ Eliminando foto del usuario ${userId}...`);
 
+        // URL proporcionada por ti (Correcta según Python)
         const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FDSearch/Delete?format=json&FDID=1&faceLibType=blackFD`;
         
-        // JSON PLANO: Sin "FaceDataRecordDelCond", directo al grano
+        // ESTRUCTURA CORREGIDA (Basada en tu script de Python)
+        // El dispositivo espera una lista de objetos, donde cada ID va dentro de "value"
         const payload = {
-            FDID: "1",
-            FPID: String(userId) 
+            FPID: [
+                { value: String(userId) } 
+            ]
         };
 
         try {
-            // Hikvision usa PUT para borrar en /Delete
+            // Usamos PUT (Confirmado por el script Python)
             const response = await this.client.fetch(targetUrl, {
                 method: 'PUT', 
                 body: JSON.stringify(payload),
@@ -155,21 +159,25 @@ export class cSyncService {
             });
 
             const text = await response.text();
-
-            console.log(text)
+            console.log("   📩 Respuesta Dispositivo:", text);
 
             let data = {};
             try { data = JSON.parse(text); } catch (e) {}
 
-            console.log(data)
+            // Verificación: Esperamos 1 seg y consultamos si realmente se borró
+            // Esto es vital porque a veces responde OK aunque falle silenciosamente
+            await this._sleep(1000);
+            const check = await this.verificarRostro(userId);
 
-            // Aceptamos 1 (Success) o warning 'OK'
-            if (data.statusCode === 1 || data.statusString === 'OK' || text.includes('OK')) {
-                console.log(`   ✅ ¡Foto eliminada correctamente!`);
+            if (!check.hasFace) {
+                console.log(`   ✅ ¡CONFIRMADO! La foto fue eliminada correctamente.`);
                 return { success: true };
             } else {
-                throw new Error(data.subStatusCode || data.statusString || text);
+                // Si llegamos aquí, es que ni con la estructura de Python funcionó
+                console.error(`   ⚠️ El dispositivo respondió OK, pero la foto sigue ahí.`);
+                throw new Error("El dispositivo no procesó el borrado (Falso positivo).");
             }
+
         } catch (error) {
             console.error('Error borrando foto:', error.message);
             throw error;

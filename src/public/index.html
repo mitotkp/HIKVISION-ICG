@@ -273,14 +273,31 @@
 
                                     <div class="flex gap-2 mb-4">
                                         <div class="relative flex-grow">
-                                            <span class="absolute inset-y-0 left-0 flex items-center pl-3"><i class="fa-solid fa-barcode text-slate-400"></i></span>
+                                            <span class="absolute inset-y-0 left-0 flex items-center pl-3">
+                                                <i :class="escaneandoTarjeta ? 'fa-solid fa-wifi fa-fade text-indigo-500' : 'fa-solid fa-barcode text-slate-400'"></i>
+                                            </span>
+                                            
                                             <input v-model="tarjetaInput" @keyup.enter="vincularTarjeta" type="text"
-                                                placeholder="Escanear tarjeta..."
-                                                :disabled="clienteSeleccionado.tarjetas && clienteSeleccionado.tarjetas.length >= 5"
-                                                class="w-full border border-slate-300 pl-9 p-2.5 rounded-lg outline-none text-sm font-mono disabled:bg-slate-100">
+                                                :placeholder="escaneandoTarjeta ? 'Pase la tarjeta por el lector...' : 'Escanear o escribir tarjeta...'"
+                                                :disabled="escaneandoTarjeta || (clienteSeleccionado.tarjetas && clienteSeleccionado.tarjetas.length >= 5)"
+                                                class="w-full border pl-9 p-2.5 rounded-lg outline-none text-sm font-mono transition-all"
+                                                :class="escaneandoTarjeta ? 'border-indigo-500 ring-2 ring-indigo-200 bg-indigo-50' : 'border-slate-300'">
+                                                
+                                            <button v-if="escaneandoTarjeta" @click="cancelarEscaneoTarjeta" 
+                                                class="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600">
+                                                <i class="fa-solid fa-xmark"></i>
+                                            </button>
                                         </div>
+
+                                        <button v-if="!escaneandoTarjeta" @click="iniciarEscaneoTarjeta" 
+                                            :disabled="clienteSeleccionado.tarjetas && clienteSeleccionado.tarjetas.length >= 5"
+                                            class="bg-white border border-slate-300 text-slate-700 px-3 rounded-lg hover:bg-slate-50 shadow-sm"
+                                            title="Leer desde dispositivo">
+                                            <i class="fa-solid fa-tower-broadcast text-indigo-600"></i>
+                                        </button>
+
                                         <button @click="vincularTarjeta"
-                                            :disabled="!tarjetaInput || (clienteSeleccionado.tarjetas && clienteSeleccionado.tarjetas.length >= 5)"
+                                            :disabled="!tarjetaInput || escaneandoTarjeta"
                                             class="bg-indigo-600 text-white px-4 rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-sm">
                                             <i class="fa-solid fa-plus"></i>
                                         </button>
@@ -340,6 +357,8 @@
                     cargandoDatos: true,
                     paginaActual: 1,
                     itemsPorPagina: 50,
+                    escaneandoTarjeta: false, 
+                    intervalTarjeta: null, 
 
                     // VARIABLES FOTO (CAPTURA AL PASO)
                     esperandoRostro: false,
@@ -461,8 +480,53 @@
                     // 2. NUEVO: CARGAR ESTADO DE FOTO DESDE EL DISPOSITIVO
                     this.cargarEstadoFoto(cliente.CODCLIENTE);
                 },
+
+                iniciarEscaneoTarjeta() {
+                    this.escaneandoTarjeta = true;
+                    this.tarjetaInput = ''; // Limpiamos input
+                    const tiempoInicio = Date.now();
+                    const maxEspera = 20000; // 20 segundos para pasar la tarjeta
+
+                    console.log("💳 Esperando lectura de tarjeta...");
+
+                    if (this.intervalTarjeta) clearInterval(this.intervalTarjeta);
+
+                    this.intervalTarjeta = setInterval(async () => {
+                        try {
+                            const res = await fetch('/api/eventos/ultimo-local');
+                            const evento = await res.json();
+
+                            // Si es un evento NUEVO y tiene NÚMERO DE TARJETA
+                            if (evento && evento.tarjetaNumero && evento.timestamp > tiempoInicio) {
+                                
+                                console.log("✅ Tarjeta detectada:", evento.tarjetaNumero);
+                                this.tarjetaInput = evento.tarjetaNumero; // Rellenamos el input
+                                
+                                // Opcional: Sonido de éxito o vibración
+                                // alert("Tarjeta leída: " + evento.tarjetaNumero); 
+                                
+                                this.cancelarEscaneoTarjeta(); // Detenemos el escaneo
+                            }
+
+                            // Timeout
+                            if (Date.now() - tiempoInicio > maxEspera) {
+                                this.cancelarEscaneoTarjeta();
+                                // alert("Tiempo agotado. No se detectó ninguna tarjeta.");
+                            }
+                        } catch (e) {
+                            console.error(e);
+                        }
+                    }, 800); // Consultamos cada 0.8s
+                },
+
+                cancelarEscaneoTarjeta() {
+                    this.escaneandoTarjeta = false;
+                    if (this.intervalTarjeta) clearInterval(this.intervalTarjeta);
+                },
+
                 cerrarModal() {
                     this.cancelarEspera();
+                    this.cancelarEscaneoTarjeta(); 
                     this.clienteSeleccionado = null;
                 },
                 async cargarEstadoFoto(id) {
