@@ -27,9 +27,17 @@ export class cSyncService {
     }
 
     _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-    _formatDate(d) { return (!d || isNaN(d)) ? "2035-12-31T23:59:59" : d.toISOString().split('.')[0]; }
 
-    // --- 1. SUBIR ROSTRO (MÉTODO URL / "DOWNLOAD") ---
+    // --- CORRECCIÓN HORA VENEZUELA (UTC-4) ---
+    _formatDate(d) { 
+        if (!d || isNaN(d)) return "2035-12-31T23:59:59";
+        // Ajustamos el offset para que la hora local se envíe tal cual es
+        const offset = d.getTimezoneOffset() * 60000; 
+        const localDate = new Date(d.getTime() - offset);
+        return localDate.toISOString().slice(0, 19); 
+    }
+
+    // --- 1. SUBIR ROSTRO ---
     async subirRostro(userId, imageBuffer) {
         console.log(`📸 Procesando foto para ID: ${userId}...`);
 
@@ -39,8 +47,7 @@ export class cSyncService {
         const localPath = path.join(UPLOADS_DIR, fileName);
         fs.writeFileSync(localPath, imageBuffer);
 
-        // ⚠️ IMPORTANTE: Asegúrate que esta IP es la de tu PC
-        const MI_IP_PC = '192.168.1.10'; 
+        const MI_IP_PC = '192.168.1.10'; // <--- VERIFICA IP DE TU PC
         const PUERTO_WEB = 6065;
         const publicFaceUrl = `http://${MI_IP_PC}:${PUERTO_WEB}/uploads/${fileName}`;
         
@@ -57,7 +64,6 @@ export class cSyncService {
         };
 
         const MAX_INTENTOS = 2;
-        let ultimoError = null;
 
         for (let intento = 1; intento <= MAX_INTENTOS; intento++) {
             try {
@@ -83,16 +89,15 @@ export class cSyncService {
 
             } catch (error) {
                 console.error(`   ❌ Fallo intento ${intento}: ${error.message}`);
-                ultimoError = error;
                 if (intento < MAX_INTENTOS) await this._sleep(1000);
             }
         }
 
         if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
-        throw ultimoError || new Error("No se pudo subir la foto.");
+        throw new Error("No se pudo subir la foto.");
     }
 
-    // --- 2. VERIFICAR SI TIENE ROSTRO (CORREGIDO) ---
+    // --- 2. VERIFICAR ROSTRO ---
     async verificarRostro(userId) {
         console.log(`🔎 Verificando rostro para ID: ${userId}...`);
         
@@ -101,7 +106,7 @@ export class cSyncService {
         const payload = {
             searchID: "SearchFace_" + Date.now(),
             FDID: "1", 
-            faceLibType: "blackFD", // <--- ESTO FALTABA: Especificar la librería
+            faceLibType: "blackFD", 
             FPID: String(userId), 
             maxResults: 10,
             searchResultPosition: 0
@@ -116,9 +121,6 @@ export class cSyncService {
 
             const data = await response.json();
 
-            console.log(data)
-
-            // Si hay coincidencias
             if (data.statusCode === 1 && data.numOfMatches > 0) {
                 console.log(`   ✅ El usuario ${userId} TIENE foto registrada.`);
                 const match = data.MatchList[0] || {};
@@ -134,24 +136,17 @@ export class cSyncService {
         }
     }
 
-    // --- 3. ELIMINAR ROSTRO (VERSIÓN PLANA) ---
-    // --- 3. ELIMINAR ROSTRO (CORREGIDO SEGÚN PYTHON) ---
+    // --- 3. ELIMINAR ROSTRO (CORREGIDO) ---
     async eliminarRostro(userId) {
         console.log(`🗑️ Eliminando foto del usuario ${userId}...`);
 
-        // URL proporcionada por ti (Correcta según Python)
         const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FDSearch/Delete?format=json&FDID=1&faceLibType=blackFD`;
         
-        // ESTRUCTURA CORREGIDA (Basada en tu script de Python)
-        // El dispositivo espera una lista de objetos, donde cada ID va dentro de "value"
         const payload = {
-            FPID: [
-                { value: String(userId) } 
-            ]
+            FPID: [ { value: String(userId) } ]
         };
 
         try {
-            // Usamos PUT (Confirmado por el script Python)
             const response = await this.client.fetch(targetUrl, {
                 method: 'PUT', 
                 body: JSON.stringify(payload),
@@ -161,11 +156,6 @@ export class cSyncService {
             const text = await response.text();
             console.log("   📩 Respuesta Dispositivo:", text);
 
-            let data = {};
-            try { data = JSON.parse(text); } catch (e) {}
-
-            // Verificación: Esperamos 1 seg y consultamos si realmente se borró
-            // Esto es vital porque a veces responde OK aunque falle silenciosamente
             await this._sleep(1000);
             const check = await this.verificarRostro(userId);
 
@@ -173,9 +163,8 @@ export class cSyncService {
                 console.log(`   ✅ ¡CONFIRMADO! La foto fue eliminada correctamente.`);
                 return { success: true };
             } else {
-                // Si llegamos aquí, es que ni con la estructura de Python funcionó
                 console.error(`   ⚠️ El dispositivo respondió OK, pero la foto sigue ahí.`);
-                throw new Error("El dispositivo no procesó el borrado (Falso positivo).");
+                throw new Error("El dispositivo no procesó el borrado.");
             }
 
         } catch (error) {
@@ -200,11 +189,14 @@ export class cSyncService {
         }
     }
 
-    // --- 5. ENVIAR CLIENTES MASIVO ---
+    // --- 5. ENVIAR CLIENTES MASIVO (MEJORADO CON UPDATE/MODIFY) ---
     async enviarClientes(clientes) {
         console.log(`🚀 Sincronizando ${clientes.length} clientes...`);
         let exito = 0; let fallos = 0;
-        const targetUrl = `${this.baseUrl}/ISAPI/AccessControl/UserInfo/Record?format=json`;
+        
+        // URLs Distintas para Crear y Modificar
+        const createUrl = `${this.baseUrl}/ISAPI/AccessControl/UserInfo/Record?format=json`;
+        const modifyUrl = `${this.baseUrl}/ISAPI/AccessControl/UserInfo/Modify?format=json`;
 
         for (const [index, cliente] of clientes.entries()) {
             try {
@@ -232,32 +224,40 @@ export class cSyncService {
                     }
                 };
 
-                let response = await this.client.fetch(targetUrl, {
+                // 1. Intentamos CREAR (POST a /Record)
+                let response = await this.client.fetch(createUrl, {
                     method: 'POST',
                     body: JSON.stringify(jsonPayload),
                     headers: { 'Content-Type': 'application/json' }
                 });
                 let data = await response.json();
 
+                console.log(data)
+
                 if (data.statusCode === 1 || data.statusString === 'OK') {
-                    console.log(`✅ [${index + 1}] ${idStr} -> OK.`);
+                    console.log(`✅ [${index + 1}] ${idStr} -> OK (Creado).`);
                     exito++;
-                } else if (data.statusString && data.statusString.includes('duplicate')) {
-                    response = await this.client.fetch(targetUrl, {
+                } else if (data.statusString && (data.statusString.includes('Invalid Content') || data.subStatusCode === 'employeeNoAlreadyExist')) {
+                    // 2. Si ya existe, intentamos MODIFICAR (PUT a /Modify)
+                    // Esto asegura que se actualicen las fechas de vencimiento
+                    console.log(`   ⚠️ Usuario ${idStr} ya existe. Actualizando datos en /Modify...`);
+                    
+                    response = await this.client.fetch(modifyUrl, {
                         method: 'PUT',
                         body: JSON.stringify(jsonPayload),
                         headers: { 'Content-Type': 'application/json' }
                     });
                     data = await response.json();
+
                     if (data.statusCode === 1 || data.statusString === 'OK') {
-                        console.log(`🔄 [${index + 1}] ${idStr} -> Actualizado.`);
+                        console.log(`   🔄 [${index + 1}] ${idStr} -> Actualizado correctamente.`);
                         exito++;
                     } else {
-                        console.error(`⚠️ [${idStr}] Falló Update:`, data.subStatusCode);
+                        console.error(`   ❌ [${idStr}] Falló Update:`, data.subStatusCode || data.statusString);
                         fallos++;
                     }
                 } else {
-                    console.error(`❌ [${idStr}] Error:`, data.statusString);
+                    console.error(`❌ [${idStr}] Error Creando:`, data.statusString);
                     fallos++;
                 }
             } catch (error) {
