@@ -99,14 +99,12 @@ export class cSyncService {
         const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FDSearch?format=json`;
         
         const payload = {
-            FDSearch: {
-                searchID: "SearchFace_" + Date.now(),
-                FDID: "1", 
-                faceLibType: "blackFD", // <--- ESTO FALTABA: Especificar la librería
-                FPID: String(userId), 
-                maxResults: 10,
-                searchResultPosition: 0
-            }
+            searchID: "SearchFace_" + Date.now(),
+            FDID: "1", 
+            faceLibType: "blackFD", // <--- ESTO FALTABA: Especificar la librería
+            FPID: String(userId), 
+            maxResults: 10,
+            searchResultPosition: 0
         };
 
         try {
@@ -121,9 +119,9 @@ export class cSyncService {
             console.log(data)
 
             // Si hay coincidencias
-            if (data.FDSearchResult && data.FDSearchResult.numOfMatches > 0) {
+            if (data.statusCode === 1 && data.numOfMatches > 0) {
                 console.log(`   ✅ El usuario ${userId} TIENE foto registrada.`);
-                const match = data.FDSearchResult.MatchList[0] || {};
+                const match = data.MatchList[0] || {};
                 return { hasFace: true, faceUrl: match.faceURL || null };
             }
             
@@ -136,38 +134,41 @@ export class cSyncService {
         }
     }
 
-    // --- 3. ELIMINAR ROSTRO (CORREGIDO - USANDO ENDPOINT DELETE) ---
+    // --- 3. ELIMINAR ROSTRO (VERSIÓN PLANA) ---
     async eliminarRostro(userId) {
         console.log(`🗑️ Eliminando foto del usuario ${userId}...`);
 
-        // Usamos la URL específica de borrado (Delete)
-        const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FaceDataRecord/Delete?format=json`;
+        const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FDSearch/Delete?format=json&FDID=1&faceLibType=blackFD`;
         
-        // Estructura correcta para borrar un rostro específico
+        // JSON PLANO: Sin "FaceDataRecordDelCond", directo al grano
         const payload = {
-            FaceDataRecordDelCond: {
-                faceLibType: "blackFD",
-                FDID: "1",
-                FPID: [String(userId)] // Generalmente espera un array de strings
-            }
+            FDID: "1",
+            FPID: String(userId) 
         };
 
         try {
+            // Hikvision usa PUT para borrar en /Delete
             const response = await this.client.fetch(targetUrl, {
-                method: 'PUT', // Hikvision usa PUT para enviar la orden de borrado
+                method: 'PUT', 
                 body: JSON.stringify(payload),
                 headers: { 'Content-Type': 'application/json' }
             });
 
             const text = await response.text();
+
+            console.log(text)
+
             let data = {};
             try { data = JSON.parse(text); } catch (e) {}
 
+            console.log(data)
+
+            // Aceptamos 1 (Success) o warning 'OK'
             if (data.statusCode === 1 || data.statusString === 'OK' || text.includes('OK')) {
                 console.log(`   ✅ ¡Foto eliminada correctamente!`);
                 return { success: true };
             } else {
-                throw new Error(data.subStatusCode || data.statusString || "Error al eliminar");
+                throw new Error(data.subStatusCode || data.statusString || text);
             }
         } catch (error) {
             console.error('Error borrando foto:', error.message);

@@ -168,6 +168,29 @@ app.get('/api/eventos/ultimo-local', (req, res) => {
     res.json(evento || {});
 });
 
+// --- PROXY DE IMÁGENES HIKVISION (NUEVO) ---
+app.get('/api/proxy-image', async (req, res) => {
+    try {
+        const imageUrl = req.query.url;
+        if (!imageUrl) return res.status(400).send('Falta URL');
+
+        // Usamos el cliente con credenciales del servicio de sincronización
+        const response = await syncService.client.fetch(imageUrl);
+        
+        if (!response.ok) throw new Error(`Error descargando imagen: ${response.statusText}`);
+
+        // Convertimos a Buffer y enviamos al navegador como imagen normal
+        const buffer = await response.arrayBuffer();
+        res.set('Content-Type', 'image/jpeg');
+        res.send(Buffer.from(buffer));
+
+    } catch (e) {
+        console.error("Error en proxy de imagen:", e.message);
+        // Enviamos una imagen vacía o error para no romper la UI
+        res.status(500).send("Error cargando imagen");
+    }
+});
+
 app.listen(port, () => {
     console.log(`\n✅ Servidor Web LISTO en: http://localhost:${port}`);
     console.log(`📂 Carpeta de uploads: ${path.join(PROJECT_ROOT, 'uploads')}`);

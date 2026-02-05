@@ -466,18 +466,15 @@
                     this.clienteSeleccionado = null;
                 },
                 async cargarEstadoFoto(id) {
-                    // Ponemos un placeholder de carga si quieres, o null
                     this.fotoActualUrl = null;
-                    
                     try {
                         const res = await fetch(`/api/cliente/${id}/foto`);
                         const data = await res.json();
                         
-                        if (data.hasPhoto) {
-                            // Si tiene foto, mostramos un indicador visual o la URL si existe
-                            // Usamos un placeholder "dummy" para activar la UI de "Foto Existe"
-                            // Si data.photoUrl existe y es accesible, úsala. Si no, usa una genérica.
-                            this.fotoActualUrl = data.photoUrl || 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'; 
+                        if (data.hasPhoto && data.photoUrl) {
+                            // TRUCO: Pasamos la URL del dispositivo a nuestro proxy
+                            // encodeURIComponent es vital para que no se rompa la URL
+                            this.fotoActualUrl = `/api/proxy-image?url=${encodeURIComponent(data.photoUrl)}`;
                         } else {
                             this.fotoActualUrl = null;
                         }
