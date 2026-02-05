@@ -37,70 +37,82 @@ export class cSyncService {
     // --- 1. SUBIR ROSTRO (MÉTODO URL / "DOWNLOAD") ---
     // Este método evita el error 'badJsonFormat' porque no envía archivos binarios,
     // sino que le dice a la cámara: "Descárgalo tú misma de esta URL".
+
     async subirRostro(userId, imageBuffer) {
-        console.log(`📸 Procesando foto para ID: ${userId} (Método URL)...`);
+        console.log(`📸 Procesando foto para ID: ${userId}...`);
 
         if (!imageBuffer) throw new Error("Buffer de imagen vacío");
 
-        // A) Guardar la foto temporalmente en tu PC (Carpeta pública)
+        // A) Guardar la foto temporalmente
         const fileName = `rostro_${userId}_${Date.now()}.jpg`;
         const localPath = path.join(UPLOADS_DIR, fileName);
         fs.writeFileSync(localPath, imageBuffer);
 
-        // B) Configurar la IP de TU computadora (Servidor Web)
-        // ⚠️ IMPORTANTE: Esta es la IP de tu PC (.188 según tus logs)
-        const MI_IP_PC = '192.168.1.10';
+        // B) Configurar URL
+        const MI_IP_PC = '192.168.1.10'; // <--- TU IP DE PC
         const PUERTO_WEB = 6065;
-
-        // Esta es la URL que la cámara intentará leer
         const publicFaceUrl = `http://${MI_IP_PC}:${PUERTO_WEB}/uploads/${fileName}`;
+        
         console.log(`   🔗 Link generado: ${publicFaceUrl}`);
 
-        // C) Enviar la orden al Hikvision (JSON Puro)
         const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json`;
-
+        
         const payload = {
-            faceURL: publicFaceUrl, // <--- La cámara descargará la foto de aquí
+            faceURL: publicFaceUrl,
             faceLibType: "blackFD",
             FDID: "1",
             FPID: String(userId),
             featurePointType: "face"
         };
 
-        try {
-            console.log(`   👉 Conectando con cámara en ${this.config.ip}...`);
+        // --- LÓGICA DE REINTENTO (LA SOLUCIÓN AL FALLO INICIAL) ---
+        const MAX_INTENTOS = 2;
+        let ultimoError = null;
 
-            const response = await this.client.fetch(targetUrl, {
-                method: 'POST',
-                body: JSON.stringify(payload),
-                headers: { 'Content-Type': 'application/json' }
-            });
+        for (let intento = 1; intento <= MAX_INTENTOS; intento++) {
+            try {
+                if (intento > 1) console.log(`   ⚠️ Reintentando subida (Intento ${intento})...`);
 
-            // Leemos respuesta
-            const textResponse = await response.text();
-            let data = {};
-            try { data = JSON.parse(textResponse); } catch (e) { }
+                const response = await this.client.fetch(targetUrl, {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                    headers: { 'Content-Type': 'application/json' }
+                });
 
-            // D) Limpieza (Borrar foto temporal tras 15 segundos)
-            setTimeout(() => {
-                if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
-            }, 15000);
+                const textResponse = await response.text();
+                let data = {};
+                try { data = JSON.parse(textResponse); } catch (e) {}
 
-            // E) Verificar Éxito
-            // Hikvision devuelve statusCode: 1 o statusString: 'OK'
-            if (data.statusCode === 1 || data.statusString === 'OK' || textResponse.includes('"statusCode": 1')) {
-                console.log(`   ✅ ¡ÉXITO! Foto asignada al usuario ${userId}`);
-                return { success: true };
-            } else {
-                console.error(`   ❌ Error Hikvision:`, textResponse);
-                throw new Error(data.subStatusCode || data.statusString || "Error desconocido del dispositivo");
+                // Verificar éxito
+                if (data.statusCode === 1 || data.statusString === 'OK' || textResponse.includes('"statusCode": 1')) {
+                    
+                    // Limpieza exitosa
+                    setTimeout(() => {
+                        if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
+                    }, 15000);
+
+                    console.log(`   ✅ ¡ÉXITO! Foto asignada correctamente.`);
+                    return { success: true };
+                } else {
+                    // Si el dispositivo responde con error, lanzamos excepción para que el catch lo agarre (o no, dependiendo del error)
+                    // Pero si es error de "Descarga", reintentar suele arreglarlo
+                    throw new Error(data.subStatusCode || data.statusString || textResponse);
+                }
+
+            } catch (error) {
+                console.error(`   ❌ Fallo intento ${intento}: ${error.message}`);
+                ultimoError = error;
+                
+                // Si falló, esperamos 1 segundo antes de reintentar para dar tiempo a la conexión
+                if (intento < MAX_INTENTOS) await this._sleep(1000);
             }
-
-        } catch (error) {
-            console.error('   ❌ Error de red/conexión:', error.message);
-            // Si dice "fetch failed", es que Node no llega a la .185
-            throw error;
         }
+
+        // Si llegamos aquí, fallaron todos los intentos
+        // Borramos el archivo temporal para no dejar basura
+        if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
+        
+        throw ultimoError || new Error("No se pudo subir la foto tras varios intentos.");
     }
 
     // --- 2. OBTENER CLIENTES (SQL SERVER) ---
