@@ -2,14 +2,14 @@ import DigestFetch from 'digest-fetch';
 
 // --- 1. CONFIGURACIÓN DEL DISPOSITIVO HIKVISION ---
 const HIK_DEVICE = {
-    ip: '10.10.10.175',
+    ip: '192.168.1.64',
     user: 'admin',
     pass: 'R3d3s1pc4..'
 };
 
 // --- 2. CONFIGURACIÓN DE TU SERVIDOR (NODE.JS) ---
 const MY_SERVER = {
-    ip: '10.10.10.188',
+    ip: '10.38.52.61',
     port: 6060,
     path: '/api/hikvision/event'
 };

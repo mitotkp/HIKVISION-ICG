@@ -45,7 +45,7 @@ export class cAccessService {
 
         ultimoEventoRecibido = {
             ...accessLog,
-            timeStamp: Date.now()
+            timestamp: Date.now()
         };
 
         return accessLog;

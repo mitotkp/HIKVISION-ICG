@@ -1,37 +1,115 @@
 import { getConnection } from "../config/db.js";
 import DigestFetch from "digest-fetch";
-import FormData from "form-data";
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const HIK_DEVICE = {
-    ip: '10.10.10.185',
-    user: 'admin',
-    pass: 'R3d3s1pc4..'
-};
+// --- CONFIGURACIÓN DE RUTAS ---
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// Calculamos la raíz del proyecto
+const PROJECT_ROOT = path.resolve(__dirname, '../../');
+const UPLOADS_DIR = path.join(PROJECT_ROOT, 'uploads');
+
+// Aseguramos que la carpeta uploads exista
+if (!fs.existsSync(UPLOADS_DIR)) {
+    try { fs.mkdirSync(UPLOADS_DIR, { recursive: true }); } catch (e) { }
+}
 
 export class cSyncService {
 
     constructor() {
-        this.client = new DigestFetch(HIK_DEVICE.user, HIK_DEVICE.pass);
-        this.baseUrl = `http://${HIK_DEVICE.ip}`;
+        // -----------------------------------------------------------
+        // 1. CONFIGURACIÓN DEL DISPOSITIVO (DESTINO)
+        // -----------------------------------------------------------
+        this.config = {
+            ip: '192.168.1.64', // <--- IP DE LA CÁMARA
+            user: 'admin',
+            pass: 'R3d3s1pc4..'
+        };
+        this.baseUrl = `http://${this.config.ip}`;
+        this.client = new DigestFetch(this.config.user, this.config.pass);
     }
 
-    // Helper para pausar y no saturar el CPU del dispositivo
-    _sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
+    _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+    _formatDate(d) { return (!d || isNaN(d)) ? "2035-12-31T23:59:59" : d.toISOString().split('.')[0]; }
+
+    // --- 1. SUBIR ROSTRO (MÉTODO URL / "DOWNLOAD") ---
+    // Este método evita el error 'badJsonFormat' porque no envía archivos binarios,
+    // sino que le dice a la cámara: "Descárgalo tú misma de esta URL".
+    async subirRostro(userId, imageBuffer) {
+        console.log(`📸 Procesando foto para ID: ${userId} (Método URL)...`);
+
+        if (!imageBuffer) throw new Error("Buffer de imagen vacío");
+
+        // A) Guardar la foto temporalmente en tu PC (Carpeta pública)
+        const fileName = `rostro_${userId}_${Date.now()}.jpg`;
+        const localPath = path.join(UPLOADS_DIR, fileName);
+        fs.writeFileSync(localPath, imageBuffer);
+
+        // B) Configurar la IP de TU computadora (Servidor Web)
+        // ⚠️ IMPORTANTE: Esta es la IP de tu PC (.188 según tus logs)
+        const MI_IP_PC = '10.38.52.61';
+        const PUERTO_WEB = 6065;
+
+        // Esta es la URL que la cámara intentará leer
+        const publicFaceUrl = `http://${MI_IP_PC}:${PUERTO_WEB}/uploads/${fileName}`;
+        console.log(`   🔗 Link generado: ${publicFaceUrl}`);
+
+        // C) Enviar la orden al Hikvision (JSON Puro)
+        const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json`;
+
+        const payload = {
+            faceURL: publicFaceUrl, // <--- La cámara descargará la foto de aquí
+            faceLibType: "blackFD",
+            FDID: "1",
+            FPID: String(userId),
+            featurePointType: "face"
+        };
+
+        try {
+            console.log(`   👉 Conectando con cámara en ${this.config.ip}...`);
+
+            const response = await this.client.fetch(targetUrl, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            // Leemos respuesta
+            const textResponse = await response.text();
+            let data = {};
+            try { data = JSON.parse(textResponse); } catch (e) { }
+
+            // D) Limpieza (Borrar foto temporal tras 15 segundos)
+            setTimeout(() => {
+                if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
+            }, 15000);
+
+            // E) Verificar Éxito
+            // Hikvision devuelve statusCode: 1 o statusString: 'OK'
+            if (data.statusCode === 1 || data.statusString === 'OK' || textResponse.includes('"statusCode": 1')) {
+                console.log(`   ✅ ¡ÉXITO! Foto asignada al usuario ${userId}`);
+                return { success: true };
+            } else {
+                console.error(`   ❌ Error Hikvision:`, textResponse);
+                throw new Error(data.subStatusCode || data.statusString || "Error desconocido del dispositivo");
+            }
+
+        } catch (error) {
+            console.error('   ❌ Error de red/conexión:', error.message);
+            // Si dice "fetch failed", es que Node no llega a la .185
+            throw error;
+        }
     }
 
+    // --- 2. OBTENER CLIENTES (SQL SERVER) ---
     async obtenerClientes() {
         try {
             const pool = await getConnection();
             const result = await pool.request().query(`
-                SELECT 
-                    C.CODCLIENTE, 
-                    C.NOMBRECLIENTE, 
-                    CL.FECHAINIPLAN, 
-                    CL.FECHAFINPLAN
-                FROM 
-                    CLIENTES C
-                    INNER JOIN CLIENTESCAMPOSLIBRES CL ON C.CODCLIENTE = CL.CODCLIENTE
+                SELECT C.CODCLIENTE, C.NOMBRECLIENTE, CL.FECHAINIPLAN, CL.FECHAFINPLAN
+                FROM CLIENTES C INNER JOIN CLIENTESCAMPOSLIBRES CL ON C.CODCLIENTE = CL.CODCLIENTE
                 ORDER BY C.CODCLIENTE
             `);
             return result.recordset;
@@ -41,173 +119,80 @@ export class cSyncService {
         }
     }
 
+    // --- 3. ENVIAR CLIENTES MASIVO ---
     async enviarClientes(clientes) {
-        console.log(`🚀 Sincronizando ${clientes.length} clientes (Modo JSON Nativo)...`);
-        let exito = 0;
-        let fallos = 0;
-
-        // URL CONFIRMADA POR TU DOCUMENTACIÓN
+        console.log(`🚀 Sincronizando ${clientes.length} clientes...`);
+        let exito = 0; let fallos = 0;
         const targetUrl = `${this.baseUrl}/ISAPI/AccessControl/UserInfo/Record?format=json`;
 
         for (const [index, cliente] of clientes.entries()) {
             try {
-                // Pausa de seguridad cada 10 registros para estabilidad
-                if (index % 10 === 0) await this._sleep(200);
+                if (index % 10 === 0) await this._sleep(100);
 
                 const inicio = cliente.FECHAINIPLAN ? new Date(cliente.FECHAINIPLAN) : new Date("2024-01-01");
                 const fin = cliente.FECHAFINPLAN ? new Date(cliente.FECHAFINPLAN) : new Date("2035-12-31");
-
                 const idStr = String(cliente.CODCLIENTE).trim();
                 const nameStr = String(cliente.NOMBRECLIENTE).trim().substring(0, 32) || "Cliente";
 
-                // PAYLOAD CONSTRUIDO SEGÚN TUS CAPABILITIES
                 const jsonPayload = {
                     UserInfo: {
                         employeeNo: idStr,
                         name: nameStr,
                         userType: "normal",
-
-                        // VIGENCIA
                         Valid: {
                             enable: true,
                             beginTime: this._formatDate(inicio),
                             endTime: this._formatDate(fin),
                             timeType: "local"
                         },
-
-                        // PERMISOS DE PUERTA
                         doorRight: "1",
-                        RightPlan: [
-                            {
-                                doorNo: 1,
-                                planTemplateNo: "1" // Plantilla 1 = Acceso 24h
-                            }
-                        ],
-
-                        // LA JOYA DE LA CORONA: Prevenimos el error 75 aquí mismo
-                        // Forzamos "Tarjeta O Rostro" desde el nacimiento del usuario
+                        RightPlan: [{ doorNo: 1, planTemplateNo: "1" }],
                         userVerifyMode: "cardOrFace"
                     }
                 };
 
-                // INTENTO DE CREACIÓN (POST)
                 let response = await this.client.fetch(targetUrl, {
                     method: 'POST',
                     body: JSON.stringify(jsonPayload),
                     headers: { 'Content-Type': 'application/json' }
                 });
-
                 let data = await response.json();
 
                 if (data.statusCode === 1 || data.statusString === 'OK') {
-                    console.log(`✅ [${index + 1}] ${idStr} -> Creado Correctamente.`);
+                    console.log(`✅ [${index + 1}] ${idStr} -> OK.`);
                     exito++;
-                }
-                // Si ya existe (duplicate), probamos ACTUALIZAR (PUT)
-                else if (data.statusString && data.statusString.includes('duplicate')) {
-
-                    // Nota: PUT también requiere ?format=json
+                } else if (data.statusString && data.statusString.includes('duplicate')) {
+                    // Si existe, actualizamos (PUT)
                     response = await this.client.fetch(targetUrl, {
                         method: 'PUT',
                         body: JSON.stringify(jsonPayload),
                         headers: { 'Content-Type': 'application/json' }
                     });
                     data = await response.json();
-
                     if (data.statusCode === 1 || data.statusString === 'OK') {
                         console.log(`🔄 [${index + 1}] ${idStr} -> Actualizado.`);
                         exito++;
                     } else {
-                        console.error(`⚠️ [${idStr}] Falló actualización:`, data.subStatusCode || data.statusString);
+                        console.error(`⚠️ [${idStr}] Falló Update:`, data.subStatusCode);
                         fallos++;
                     }
-                }
-                else {
-                    console.error(`❌ [${idStr}] Error:`, JSON.stringify(data));
+                } else {
+                    console.error(`❌ [${idStr}] Error:`, data.statusString);
                     fallos++;
                 }
-
             } catch (error) {
                 console.error(`Error Red [${cliente.CODCLIENTE}]:`, error.message);
                 fallos++;
-                await this._sleep(1000); // Pausa larga si hay error de red
+                await this._sleep(1000);
             }
         }
-
-        console.log(`\n--- RESUMEN FINAL ---`);
-        console.log(`Total: ${clientes.length} | Éxitos: ${exito} | Fallos: ${fallos}`);
+        console.log(`\n--- RESUMEN: ${exito} OK | ${fallos} Fallos ---`);
     }
 
-    _formatDate(dateObj) {
-        if (!dateObj || isNaN(dateObj)) return "2035-12-31T23:59:59";
-        // Formato estricto ISO 8601 sin milisegundos: YYYY-MM-DDTHH:mm:ss
-        const iso = dateObj.toISOString();
-        return iso.split('.')[0];
-    }
-
-    async subirRostro(userId, imageBuffer) {
-        console.log(`📸 Subiendo rostro para ID: ${userId}...`);
-
-        // 1. Validar que tengamos datos
-        if (!imageBuffer) throw new Error("El buffer de la imagen está vacío");
-
-        const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FDSearch?format=json`;
-
-        // 2. Preparar el Form-Data (Hikvision exige Multipart estricto para fotos)
-        const form = new FormData();
-
-        // Parte A: JSON Descriptor (Metadatos)
-        const faceData = {
-            FaceDataRecord: {
-                faceLibType: "blackFD", // "blackFD" es la lista estándar de empleados
-                FDID: "1",              // ID de la librería (siempre 1)
-                FPID: String(userId)    // VITAL: Debe coincidir con el employeeNo del usuario
-            }
-        };
-        form.append('FaceDataRecord', JSON.stringify(faceData));
-
-        // Parte B: La Imagen en sí
-        // Al venir de Multer (Web), es un Buffer. Debemos darle nombre y tipo.
-        form.append('img', imageBuffer, {
-            filename: 'rostro.jpg',
-            contentType: 'image/jpeg',
-            knownLength: imageBuffer.length
-        });
-
-        try {
-            // 3. Enviar al dispositivo
-            const response = await this.client.fetch(targetUrl, {
-                method: 'POST', // Para subir fotos se usa POST
-                body: form,
-                headers: form.getHeaders() // form-data genera el Boundary automáticamente
-            });
-
-            const data = await response.json();
-
-            // 4. Verificar respuesta
-            if (data.statusCode === 1 || data.statusString === 'OK') {
-                console.log(`✅ Foto vinculada correctamente al usuario ${userId}`);
-                return { success: true };
-            } else {
-                console.error(`❌ Hikvision rechazó la foto:`, data);
-                throw new Error(data.subStatusCode || data.statusString || "Error desconocido al subir foto");
-            }
-        } catch (error) {
-            console.error('Error de red al subir foto:', error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * Asigna una tarjeta RFID a un usuario.
-     * Endpoint: /ISAPI/AccessControl/CardInfo/Record
-     */
+    // --- 4. VINCULAR TARJETA ---
     async vincularTarjeta(userId, cardNumber) {
-        console.log(`💳 Vinculando tarjeta ${cardNumber} al ID: ${userId}...`);
-
-        const targetUrl = `${this.baseUrl}/ISAPI/AccessControl/CardInfo/Record?format=json`;
-
-        // Estructura JSON para vincular tarjeta
+        console.log(`💳 Vinculando tarjeta ${cardNumber} a ID ${userId}...`);
+        const url = `${this.baseUrl}/ISAPI/AccessControl/CardInfo/Record?format=json`;
         const body = {
             CardInfo: {
                 employeeNo: String(userId),
@@ -216,229 +201,121 @@ export class cSyncService {
             }
         };
 
-        try {
-            const response = await this.client.fetch(targetUrl, {
-                method: 'POST', // Usamos POST para crear el registro de tarjeta
-                body: JSON.stringify(body),
-                headers: { 'Content-Type': 'application/json' }
-            });
+        const res = await this.client.fetch(url, {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
 
-            const data = await response.json();
-
-            if (data.statusCode === 1 || data.statusString === 'OK') {
-                console.log(`✅ Tarjeta ${cardNumber} vinculada al usuario ${userId}`);
-                return { success: true };
-            } else {
-                console.error(`❌ Hikvision rechazó la tarjeta:`, data);
-                throw new Error(data.subStatusCode || data.statusString || "Error al vincular tarjeta");
-            }
-        } catch (error) {
-            console.error('Error de red al vincular tarjeta:', error.message);
-            throw error;
-        }
+        if (data.statusCode === 1 || data.statusString === 'OK') return { success: true };
+        throw new Error(data.subStatusCode || "Error al vincular tarjeta");
     }
 
-    /**
-     * Obtiene las tarjetas siguiendo el diagrama oficial:
-     * 1. Search (POST) con Paginación obligatoria.
-     * Endpoint: /ISAPI/AccessControl/CardInfo/Search?format=json
-     */
+    // --- 5. OBTENER TARJETAS ---
     async obtenerTarjetasDelDispositivo(userId) {
-        console.log(`📡 Buscando tarjetas para ID: ${userId}...`);
-
-        const targetUrl = `${this.baseUrl}/ISAPI/AccessControl/CardInfo/Search?format=json`;
-
-        // PAYLOAD ESTRICTO SEGÚN DOCUMENTACIÓN
+        const url = `${this.baseUrl}/ISAPI/AccessControl/CardInfo/Search?format=json`;
         const body = {
             CardInfoSearchCond: {
-                searchID: "BusquedaWeb-" + Date.now(), // ID único para esta búsqueda
-                searchResultPosition: 0, // <--- ESTO FALTABA: Obligatorio empezar en 0
-                maxResults: 10,          // Traemos máx 10
-                EmployeeNoList: [
-                    { employeeNo: String(userId) }
-                ]
-            }
-        };
-
-        try {
-            const response = await this.client.fetch(targetUrl, {
-                method: 'POST',
-                body: JSON.stringify(body),
-                headers: { 'Content-Type': 'application/json' }
-            });
-
-            const data = await response.json();
-
-            // CASO A: Respuesta exitosa con tarjetas
-            if (data.CardInfoSearch && data.CardInfoSearch.CardInfo) {
-                // Hikvision devuelve un Objeto si es 1 sola tarjeta, y Array si son varias.
-                // Normalizamos siempre a Array.
-                const listaBruta = Array.isArray(data.CardInfoSearch.CardInfo)
-                    ? data.CardInfoSearch.CardInfo
-                    : [data.CardInfoSearch.CardInfo];
-
-                // Extraemos solo el número de tarjeta (cardNo)
-                const tarjetas = listaBruta.map(t => t.cardNo);
-                console.log(`   ✅ Encontradas ${tarjetas.length} tarjetas.`);
-                return tarjetas;
-            }
-
-            // CASO B: Respuesta exitosa pero SIN tarjetas (responseStatusStrg: "NO MATCH" o lista vacía)
-            if (data.CardInfoSearch && data.CardInfoSearch.responseStatusStrg === "NO MATCH") {
-                console.log(`   ℹ️ El usuario no tiene tarjetas asignadas.`);
-                return [];
-            }
-
-            // CASO C: Error genérico
-            if (data.statusCode && data.statusCode !== 1) {
-                console.warn(`   ⚠️ Alerta Hikvision: ${data.statusString}`);
-            }
-
-            return [];
-
-        } catch (error) {
-            console.error('Error buscando tarjetas:', error.message);
-            return [];
-        }
-    }
-
-    /**
-     * Busca historial con rango de fecha AMPLIO para evitar errores de reloj.
-     */
-    async obtenerUltimosEventos() {
-        // console.log("🔍 Consultando historial de eventos..."); // Debug opcional
-        const url = `${this.baseUrl}/ISAPI/AccessControl/AcsEvent/Search?format=json`;
-
-        const payload = {
-            AcsEventSearchDescription: {
-                searchID: "Search_" + Date.now(), // ID único cada vez
+                searchID: "SearchCard" + Date.now(),
                 searchResultPosition: 0,
-                maxResults: 30, // Traemos bastantes para asegurar
-                major: 0,
-                minor: 0,
-                // TRUCO: Rango de fecha exagerado para ignorar desincronización de hora
-                startTime: "2020-01-01T00:00:00-05:00",
-                endTime: "2030-12-31T23:59:59-05:00"
+                maxResults: 10,
+                EmployeeNoList: [{ employeeNo: String(userId) }]
             }
         };
 
         try {
             const res = await this.client.fetch(url, {
                 method: 'POST',
+                body: JSON.stringify(body),
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await res.json();
+
+            if (data.CardInfoSearch && data.CardInfoSearch.CardInfo) {
+                const lista = Array.isArray(data.CardInfoSearch.CardInfo) ? data.CardInfoSearch.CardInfo : [data.CardInfoSearch.CardInfo];
+                return lista.map(t => t.cardNo);
+            }
+            return [];
+        } catch (e) { return []; }
+    }
+
+    // --- 6. ELIMINAR TARJETA ---
+    async eliminarTarjeta(userId, cardNo) {
+        console.log(`🗑️ Eliminando tarjeta ${cardNo}...`);
+        const url = `${this.baseUrl}/ISAPI/AccessControl/CardInfo/Delete?format=json`;
+        const body = {
+            CardInfoDelCond: { CardNoList: [{ cardNo: String(cardNo) }] }
+        };
+        const res = await this.client.fetch(url, {
+            method: 'PUT',
+            body: JSON.stringify(body),
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (data.statusCode === 1 || data.statusString === 'OK') return { success: true };
+        throw new Error(data.subStatusCode || "Error al eliminar");
+    }
+
+    // --- 7. CAPTURA AL PASO (RADAR DE EVENTOS) ---
+    async obtenerUltimosEventos() {
+        const url = `${this.baseUrl}/ISAPI/AccessControl/AcsEvent/Search?format=json`;
+        const payload = {
+            AcsEventSearchDescription: {
+                searchID: "Radar_" + Date.now(),
+                searchResultPosition: 0,
+                maxResults: 30,
+                major: 0, minor: 0,
+                startTime: "2020-01-01T00:00:00-05:00",
+                endTime: "2030-12-31T23:59:59-05:00"
+            }
+        };
+        try {
+            const res = await this.client.fetch(url, {
+                method: 'POST',
                 body: JSON.stringify(payload),
                 headers: { 'Content-Type': 'application/json' }
             });
-
             if (!res.ok) return [];
-
             const data = await res.json();
             const eventos = data.AcsEventSearch?.AcsEvent || [];
             const lista = Array.isArray(eventos) ? eventos : [eventos];
 
-            // Filtramos, ordenamos y limpiamos
             return lista
-                .filter(e => e.pictureURL) // Solo los que tienen foto
+                .filter(e => e.pictureURL)
                 .map(e => ({
                     time: e.time,
-                    minor: parseInt(e.minor, 10), // <--- IMPORTANTE: Convertir a número
+                    minor: parseInt(e.minor, 10),
                     pictureURL: e.pictureURL,
                     name: e.name || "Desconocido"
                 }))
-                .sort((a, b) => new Date(b.time) - new Date(a.time)); // El más nuevo primero (índice 0)
-
-        } catch (error) {
-            console.error("Error buscando eventos:", error.message);
-            return [];
-        }
+                .sort((a, b) => new Date(b.time) - new Date(a.time));
+        } catch (e) { return []; }
     }
 
-    /**
-     * Método Radar: Busca el primer evento 76 (Desconocido) que aparezca.
-     */
     async esperarNuevoEvento() {
-        console.log("📡 Radar activado: Esperando evento 76 (Desconocido)...");
+        console.log("📡 Radar activado: Esperando rostro desconocido (76)...");
+        let ultimaHora = "";
 
-        // 1. Guardamos la hora del evento 76 más reciente que existe AHORA (para no repetir)
-        let ultimaHoraEvento76 = "";
+        // Obtenemos estado inicial
         try {
             const historial = await this.obtenerUltimosEventos();
-            const ultimo76 = historial.find(e => e.minor === 76);
-            if (ultimo76) {
-                ultimaHoraEvento76 = ultimo76.time;
-                console.log(`   (Ignorando eventos anteriores a: ${ultimaHoraEvento76})`);
-            }
+            const ultimo = historial.find(e => e.minor === 76);
+            if (ultimo) ultimaHora = ultimo.time;
         } catch (e) { }
 
-        const intentos = 20; // 20 intentos de 1.5s = 30 segundos aprox
-
-        for (let i = 0; i < intentos; i++) {
-            await this._sleep(1500); // Espera 1.5 seg entre consultas
-
+        for (let i = 0; i < 20; i++) {
+            await this._sleep(1500);
             try {
-                // 2. Buscamos de nuevo
                 const eventos = await this.obtenerUltimosEventos();
+                const candidato = eventos.find(e => e.minor === 76);
 
-                // 3. Filtramos: Solo código 76
-                const eventoCandidato = eventos.find(e => e.minor === 76);
-
-                if (eventoCandidato) {
-                    // Verificamos si es NUEVO (hora distinta a la que vimos al inicio)
-                    // O si no había ninguno antes, este es el bueno.
-                    if (eventoCandidato.time !== ultimaHoraEvento76) {
-                        console.log(`📸 ¡CAPTURA EXITOSA! Evento 76 detectado a las ${eventoCandidato.time}`);
-                        console.log(`   URL: ${eventoCandidato.pictureURL}`);
-                        return eventoCandidato;
-                    }
+                if (candidato && candidato.time !== ultimaHora) {
+                    console.log(`📸 ¡CAPTURA EXITOSA! ${candidato.time}`);
+                    return candidato;
                 }
-            } catch (e) {
-                process.stdout.write("x"); // Error de red momentáneo
-            }
+            } catch (e) { }
         }
-
-        throw new Error("Tiempo agotado. No se detectó un nuevo rostro desconocido.");
-    }
-
-    _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-    /**
-     * Elimina una tarjeta específica.
-     * Endpoint: PUT /ISAPI/AccessControl/CardInfo/Delete
-     */
-    async eliminarTarjeta(userId, cardNo) {
-        console.log(`🗑️ Eliminando tarjeta ${cardNo}...`);
-
-        const targetUrl = `${this.baseUrl}/ISAPI/AccessControl/CardInfo/Delete?format=json`;
-
-        // CORRECCIÓN: Enviamos SOLO la lista de tarjetas.
-        // Quitamos EmployeeNoList para evitar "Invalid Content".
-        const body = {
-            CardInfoDelCond: {
-                CardNoList: [
-                    { cardNo: String(cardNo) }
-                ]
-            }
-        };
-
-        try {
-            const response = await this.client.fetch(targetUrl, {
-                method: 'PUT',
-                body: JSON.stringify(body),
-                headers: { 'Content-Type': 'application/json' }
-            });
-
-            const data = await response.json();
-
-            // Validamos éxito (statusCode 1 o 'OK')
-            if (data.statusCode === 1 || data.statusString === 'OK') {
-                console.log(`   ✅ Tarjeta ${cardNo} eliminada.`);
-                return { success: true };
-            } else {
-                console.error(`   ❌ Fallo al eliminar:`, data);
-                throw new Error(data.subStatusCode || data.statusString || "Error desconocido");
-            }
-        } catch (error) {
-            console.error('Error borrando tarjeta:', error.message);
-            throw error;
-        }
+        throw new Error("Tiempo agotado.");
     }
 }
