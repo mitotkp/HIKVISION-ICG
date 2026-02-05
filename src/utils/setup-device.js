@@ -1,25 +1,29 @@
 import DigestFetch from 'digest-fetch';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-// --- 1. CONFIGURACIÓN DEL DISPOSITIVO HIKVISION ---
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, '../../.env') });
+
 const HIK_DEVICE = {
-    ip: '192.168.1.64',
-    user: 'admin',
-    pass: 'R3d3s1pc4..'
+    ip: process.env.HIK_IP || '192.168.1.64',
+    user: process.env.HIK_USER || 'admin',
+    pass: process.env.HIK_PASS || 'R3d3s1pc4..'
 };
 
-// --- 2. CONFIGURACIÓN DE TU SERVIDOR (NODE.JS) ---
 const MY_SERVER = {
-    ip: '192.168.1.10',
-    port: 6060,
-    path: '/api/hikvision/event'
+    ip: process.env.LOCAL_IP || '192.168.1.10',
+    port: process.env.PORT || 6060,
+    path: '/api/hikvision/event'    
 };
 
 const client = new DigestFetch(HIK_DEVICE.user, HIK_DEVICE.pass);
 
 const targetUrl = `http://${HIK_DEVICE.ip}/ISAPI/Event/notification/httpHosts/1`;
 
-// --- EL PAYLOAD EN XML (Lo que el dispositivo exige) ---
-// Le decimos: "Configúrate con este XML, pero mándame los eventos en JSON"
 const xmlPayload = `
 <HttpHostNotification xmlns="http://www.hikvision.com/ver20/XMLSchema">
     <id>1</id>
@@ -43,7 +47,7 @@ async function configureDevice() {
             method: 'PUT',
             body: xmlPayload,
             headers: {
-                'Content-Type': 'application/xml' // Header clave para que no de error 5
+                'Content-Type': 'application/xml' 
             }
         });
 
@@ -51,7 +55,6 @@ async function configureDevice() {
 
         console.log(textResponse);
 
-        // Intentamos parsear la respuesta (que vendrá en XML) para ver si fue OK
         if (response.status === 200 && textResponse.includes('<statusCode>1</statusCode>')) {
             console.log('\n¡ÉXITO TOTAL!');
             console.log('El dispositivo aceptó la configuración XML.');

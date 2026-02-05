@@ -18,9 +18,9 @@ export class cSyncService {
 
     constructor() {
         this.config = {
-            ip: '192.168.1.64', // <--- VERIFICA TU IP
-            user: 'admin',
-            pass: 'R3d3s1pc4..'
+            ip: process.env.HIK_IP, // <--- VERIFICA TU IP
+            user: process.env.HIK_USER,
+            pass: process.env.HIK_PASS
         };
         this.baseUrl = `http://${this.config.ip}`;
         this.client = new DigestFetch(this.config.user, this.config.pass);
@@ -47,8 +47,8 @@ export class cSyncService {
         const localPath = path.join(UPLOADS_DIR, fileName);
         fs.writeFileSync(localPath, imageBuffer);
 
-        const MI_IP_PC = '192.168.1.10'; // <--- VERIFICA IP DE TU PC
-        const PUERTO_WEB = 6065;
+        const MI_IP_PC = process.env.LOCAL_IP; // <--- VERIFICA IP DE TU PC
+        const PUERTO_WEB = process.env.PORT;
         const publicFaceUrl = `http://${MI_IP_PC}:${PUERTO_WEB}/uploads/${fileName}`;
         
         console.log(`   🔗 Link generado: ${publicFaceUrl}`);
