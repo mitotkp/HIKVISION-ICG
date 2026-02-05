@@ -76,7 +76,7 @@ export class cAccessService {
     }
 
     _esAccesoExitoso(codigo) {
-        return [1, 4, 197].includes(codigo);
+        return [1, 4, 75, 21, 197].includes(codigo);
     }
 
     _traducirEvento(codigo, verifyMode) {

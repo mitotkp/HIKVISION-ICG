@@ -410,4 +410,49 @@ export class cSyncService {
         
         throw new Error("Tiempo agotado. Nadie pasó frente a la cámara.");
     }
+
+    // --- 10. CONTROL REMOTO DE PUERTA ---
+    async abrirPuerta(doorId = 1) {
+        console.log(`🔓 Enviando comando de apertura a Puerta ${doorId}...`);
+
+        // 1. Usamos la URL sin "?format=json" para forzar modo nativo
+        const targetUrl = `${this.baseUrl}/ISAPI/AccessControl/RemoteControl/door/${doorId}`;
+        
+        // 2. Enviamos el payload en XML (El lenguaje nativo de Hikvision)
+        // Esto suele solucionar los errores 401 falsos en este endpoint
+        const xmlPayload = `<?xml version="1.0" encoding="UTF-8"?>
+            <RemoteControlDoor version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+            <cmd>open</cmd>
+            </RemoteControlDoor>`;
+
+        try {
+            const response = await this.client.fetch(targetUrl, {
+                method: 'PUT',
+                body: xmlPayload,
+                headers: { 'Content-Type': 'application/xml' } // Cabecera XML importante
+            });
+
+            const text = await response.text();
+            
+            // 3. Verificamos la respuesta (Buscamos statusCode 1 o OK)
+            // Hikvision devuelve XML, así que buscamos el string de éxito
+            if (response.ok || text.includes('<statusCode>1</statusCode>') || text.includes('<statusString>OK</statusString>')) {
+                console.log(`   ✅ ¡Puerta abierta exitosamente!`);
+                return { success: true };
+            } else {
+                console.error(`   ❌ Fallo al abrir puerta (Respuesta):`, text);
+                
+                // Si sigue dando 401, es probable que sea un tema de permisos del usuario 'admin'
+                if (text.includes('Unauthorized') || text.includes('401')) {
+                    throw new Error("Error 401: El dispositivo rechazó las credenciales para este comando específico. Verifica permisos.");
+                }
+                
+                throw new Error("El dispositivo rechazó el comando.");
+            }
+
+        } catch (error) {
+            console.error('Error control puerta:', error.message);
+            throw error;
+        }
+    }
 }

@@ -54,6 +54,12 @@
                             <p class="text-[9px] text-slate-400 truncate mt-0.5">{{ syncProgress.nombre }}</p>
                         </div>
 
+                        <button @click="abrirPuertaManual" 
+                            class="group relative inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-emerald-700 bg-emerald-100 border border-emerald-200 rounded-lg shadow-sm hover:bg-emerald-200 hover:shadow focus:outline-none transition-all duration-200">
+                            <i class="fa-solid fa-door-open mr-2 group-hover:scale-110 transition-transform"></i>
+                            Abrir Puerta
+                        </button>
+
                         <button @click="sincronizarTodo" :disabled="loadingSync"
                             class="group relative inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-white transition-all duration-200 bg-indigo-600 border border-transparent rounded-lg shadow-sm hover:bg-indigo-700 hover:shadow disabled:opacity-70 disabled:cursor-not-allowed">
                             <i :class="loadingSync ? 'fa-spin' : ''" class="fa-solid fa-sync mr-2"></i>
@@ -463,6 +469,26 @@
                         alert("⚠️ Error de conexión: No se pudieron cargar los datos.");
                     } finally {
                         this.cargandoDatos = false;
+                    }
+                },
+
+                // --- ACCIÓN REMOTA ---
+                async abrirPuertaManual() {
+                    if (!confirm("¿Seguro que deseas abrir la puerta principal?")) return;
+
+                    try {
+                        const res = await fetch('/api/dispositivo/abrir-puerta', { method: 'POST' });
+                        const data = await res.json();
+
+                        if (data.success) {
+                            // Feedback visual rápido
+                            alert("🔓 ¡Puerta Abierta!");
+                        } else {
+                            alert("❌ Error: " + data.error);
+                        }
+                    } catch (e) {
+                        console.error(e);
+                        alert("Error de conexión al intentar abrir.");
                     }
                 },
 

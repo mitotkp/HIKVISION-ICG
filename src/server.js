@@ -225,6 +225,16 @@ app.get('/api/proxy-image', async (req, res) => {
     }
 });
 
+// --- RUTA: ABRIR PUERTA MANUALMENTE ---
+app.post('/api/dispositivo/abrir-puerta', async (req, res) => {
+    try {
+        await syncService.abrirPuerta(); // Por defecto abre la puerta 1
+        res.json({ success: true, message: 'Puerta abierta' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 cron.schedule('0 8,20 * * *', async() => {
     console.log('[CRON] Iniciando sincronización automática programada...');
     try {
