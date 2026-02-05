@@ -190,7 +190,7 @@ export class cSyncService {
     }
 
     // --- 5. ENVIAR CLIENTES MASIVO (MEJORADO CON UPDATE/MODIFY) ---
-    async enviarClientes(clientes) {
+    async enviarClientes(clientes, onProgress = () => {}) {
         console.log(`🚀 Sincronizando ${clientes.length} clientes...`);
         let exito = 0; let fallos = 0;
         
@@ -199,6 +199,13 @@ export class cSyncService {
         const modifyUrl = `${this.baseUrl}/ISAPI/AccessControl/UserInfo/Modify?format=json`;
 
         for (const [index, cliente] of clientes.entries()) {
+            
+            onProgress({
+                actual: index + 1,
+                total: clientes.length,
+                nombre: cliente.NOMBRECLIENTE
+            }); 
+            
             try {
                 if (index % 10 === 0) await this._sleep(100);
 

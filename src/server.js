@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { cSyncService } from './services/sync.service.js';
 import { cAccessService } from './services/access.service.js'; // Importación correcta
+import cron from 'node-cron';
 
 // Configuración de rutas
 const __filename = fileURLToPath(import.meta.url);
@@ -51,6 +52,39 @@ app.post('/api/sync-all', async (req, res) => {
         res.json({ message: 'Sincronización iniciada' });
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/sync-stream', async (req, res) => {
+    // Cabeceras para Server-Sent Events
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    try {
+        const clientes = await syncService.obtenerClientes();
+        
+        // Enviamos mensaje inicial
+        res.write(`data: ${JSON.stringify({ tipo: 'inicio', total: clientes.length })}\n\n`);
+
+        await syncService.enviarClientes(clientes, (progreso) => {
+            // Cada vez que syncService avanza, enviamos un evento al navegador
+            const payload = JSON.stringify({ 
+                tipo: 'progreso', 
+                actual: progreso.actual, 
+                total: progreso.total,
+                nombre: progreso.nombre
+            });
+            res.write(`data: ${payload}\n\n`);
+        });
+
+        // Mensaje final
+        res.write(`data: ${JSON.stringify({ tipo: 'fin' })}\n\n`);
+        res.end();
+
+    } catch (error) {
+        res.write(`data: ${JSON.stringify({ tipo: 'error', msg: error.message })}\n\n`);
+        res.end();
     }
 });
 
@@ -191,7 +225,18 @@ app.get('/api/proxy-image', async (req, res) => {
     }
 });
 
+cron.schedule('0 8,20 * * *', async() => {
+    console.log('[CRON] Iniciando sincronización automática programada...');
+    try {
+        const clientes = await syncService.obtenerClientes();
+        const resultado = await syncService.enviarClientes(clientes);
+        console.log(` [CRON] Finalizado. Éxitos: ${resultado.exito}, Fallos: ${resultado.fallos}`);
+    } catch (e) {
+        console.error('[CRON] Error:', e.message);
+    }
+}); 
+
 app.listen(port, () => {
-    console.log(`\n✅ Servidor Web LISTO en: http://localhost:${port}`);
-    console.log(`📂 Carpeta de uploads: ${path.join(PROJECT_ROOT, 'uploads')}`);
+    console.log(`\n Servidor Web LISTO en: http://localhost:${port}`);
+    console.log(` Carpeta de uploads: ${path.join(PROJECT_ROOT, 'uploads')}`);
 });

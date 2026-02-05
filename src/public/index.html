@@ -29,24 +29,37 @@
 
     <div id="app" v-cloak class="min-h-screen flex flex-col">
 
-        <nav class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm backdrop-blur-md bg-white/90">
+          <nav class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm backdrop-blur-md bg-white/90">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between h-16 items-center">
                     <div class="flex items-center gap-3">
                         <div class="bg-indigo-600 text-white p-2 rounded-lg shadow-sm shadow-indigo-200">
-                            <i class="fa-solid fa-fingerprint text-xl"></i>
+                            <i class="fa-solid fa-user-shield text-xl"></i>
                         </div>
                         <div>
                             <h1 class="text-xl font-bold text-slate-800 tracking-tight leading-none">Acceso ICG</h1>
                             <span class="text-xs text-slate-500 font-medium">Gestión Hikvision</span>
                         </div>
                     </div>
-                    <button @click="sincronizarTodo" :disabled="loadingSync"
-                        class="group relative inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-white transition-all duration-200 bg-indigo-600 border border-transparent rounded-lg shadow-sm hover:bg-indigo-700 hover:shadow focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-70 disabled:cursor-not-allowed">
-                        <i :class="loadingSync ? 'fa-spin' : 'group-hover:rotate-180 transition-transform duration-500'"
-                            class="fa-solid fa-sync mr-2"></i>
-                        {{ loadingSync ? 'Sincronizando...' : 'Sincronizar Todo' }}
-                    </button>
+                    <div class="flex items-center gap-4">
+                        <div v-if="loadingSync" class="flex flex-col w-48">
+                            <div class="flex justify-between text-[10px] font-bold text-indigo-600 mb-1">
+                                <span>Sincronizando...</span>
+                                <span>{{ syncProgress.actual }} / {{ syncProgress.total }}</span>
+                            </div>
+                            <div class="w-full bg-indigo-100 rounded-full h-2.5 overflow-hidden">
+                                <div class="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" 
+                                    :style="{ width: syncPorcentaje + '%' }"></div>
+                            </div>
+                            <p class="text-[9px] text-slate-400 truncate mt-0.5">{{ syncProgress.nombre }}</p>
+                        </div>
+
+                        <button @click="sincronizarTodo" :disabled="loadingSync"
+                            class="group relative inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-white transition-all duration-200 bg-indigo-600 border border-transparent rounded-lg shadow-sm hover:bg-indigo-700 hover:shadow disabled:opacity-70 disabled:cursor-not-allowed">
+                            <i :class="loadingSync ? 'fa-spin' : ''" class="fa-solid fa-sync mr-2"></i>
+                            {{ loadingSync ? 'Procesando...' : 'Sincronizar Todo' }}
+                        </button>
+                    </div>
                 </div>
             </div>
         </nav>
@@ -328,6 +341,35 @@
                                         <i class="fa-solid fa-id-card-clip text-2xl mb-2 opacity-30"></i>
                                         <p class="text-xs">Sin tarjetas asignadas</p>
                                     </div>
+
+                                    <div class="bg-white border border-slate-200 rounded-xl p-4 flex justify-between items-center shadow-sm">
+                                        <div class="flex items-center gap-3">
+                                            <div class="bg-indigo-50 text-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center">
+                                                <i class="fa-regular fa-calendar-check text-lg"></i>
+                                            </div>
+                                            <div>
+                                                <p class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Inicio Plan</p>
+                                                <p class="text-sm font-bold text-slate-700">
+                                                    {{ formatearFecha(clienteSeleccionado.FECHAINIPLAN) }}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <div class="h-8 w-px bg-slate-200"></div> <div class="flex items-center gap-3 text-right">
+                                            <div>
+                                                <p class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Vencimiento</p>
+                                                <p :class="estaVigente(clienteSeleccionado.FECHAFINPLAN) ? 'text-emerald-600' : 'text-rose-600'" 
+                                                class="text-sm font-bold flex items-center justify-end gap-1">
+                                                    {{ formatearFecha(clienteSeleccionado.FECHAFINPLAN) }}
+                                                    <i v-if="!estaVigente(clienteSeleccionado.FECHAFINPLAN)" class="fa-solid fa-triangle-exclamation text-xs"></i>
+                                                </p>
+                                            </div>
+                                            <div :class="estaVigente(clienteSeleccionado.FECHAFINPLAN) ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'"
+                                                class="w-10 h-10 rounded-lg flex items-center justify-center">
+                                                <i :class="estaVigente(clienteSeleccionado.FECHAFINPLAN) ? 'fa-solid fa-hourglass-half' : 'fa-solid fa-ban'" class="text-lg"></i>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -359,6 +401,7 @@
                     itemsPorPagina: 50,
                     escaneandoTarjeta: false, 
                     intervalTarjeta: null, 
+                    syncProgress: { actual: 0, total: 0, nombre: '' },
 
                     // VARIABLES FOTO (CAPTURA AL PASO)
                     esperandoRostro: false,
@@ -382,7 +425,11 @@
                     const inicio = (this.paginaActual - 1) * this.itemsPorPagina;
                     const fin = inicio + this.itemsPorPagina;
                     return this.clientesResultadosBusqueda.slice(inicio, fin);
-                }
+                },
+                syncPorcentaje() {
+                    if (this.syncProgress.total === 0) return 0;
+                    return Math.round((this.syncProgress.actual / this.syncProgress.total) * 100);
+                },
             },
             watch: {
                 busqueda() {
@@ -655,14 +702,42 @@
 
                 // --- OTROS ---
                 async sincronizarTodo() {
+                    if (!confirm("Se enviarán TODOS los clientes al dispositivo. ¿Continuar?")) return;
+                    
                     this.loadingSync = true;
-                    if (confirm("Se enviarán TODOS los clientes al dispositivo. ¿Continuar?")) {
-                        try {
-                            await fetch('/api/sync-all', { method: 'POST' });
-                            alert("✅ Sincronización iniciada.");
-                        } catch (e) { alert("❌ Error: " + e.message); }
-                    }
-                    this.loadingSync = false;
+                    this.syncProgress = { actual: 0, total: 0, nombre: 'Iniciando...' };
+
+                    // Usamos EventSource para recibir datos en tiempo real (SSE)
+                    const eventSource = new EventSource('/api/sync-stream');
+
+                    eventSource.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+
+                        if (data.tipo === 'inicio') {
+                            this.syncProgress.total = data.total;
+                        } else if (data.tipo === 'progreso') {
+                            this.syncProgress.actual = data.actual;
+                            this.syncProgress.total = data.total;
+                            this.syncProgress.nombre = data.nombre;
+                        } else if (data.tipo === 'fin') {
+                            eventSource.close();
+                            this.loadingSync = false;
+                            alert("✅ Sincronización completada exitosamente.");
+                        } else if (data.tipo === 'error') {
+                            eventSource.close();
+                            this.loadingSync = false;
+                            alert("❌ Error: " + data.msg);
+                        }
+                    };
+
+                    eventSource.onerror = () => {
+                        if (this.loadingSync) { // Si no ha terminado y da error
+                            console.error("Error de conexión SSE");
+                            eventSource.close();
+                            this.loadingSync = false;
+                            alert("Error de conexión con el servidor.");
+                        }
+                    };
                 },
 
                 async vincularTarjeta() {
