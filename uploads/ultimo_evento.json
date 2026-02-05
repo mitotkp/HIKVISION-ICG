@@ -1,0 +1,11 @@
+{
+  "empleadoId": "DESCONOCIDO",
+  "nombre": "Desconocido",
+  "fechaHora": "4/2/2026, 10:40:27 p.m.",
+  "puertaId": 1,
+  "codigoEvento": 28,
+  "descripcion": "EVENTO 28",
+  "accesoPermitido": false,
+  "fotoUrl": null,
+  "timestamp": 1770259227122
+}
