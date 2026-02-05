@@ -1,7 +1,7 @@
 import DigestFetch from 'digest-fetch';
 
 const CONFIG = {
-    ip: '10.10.10.175',
+    ip: '192.168.1.64',
     user: 'admin',
     pass: 'R3d3s1pc4..'
 };

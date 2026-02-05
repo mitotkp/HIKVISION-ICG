@@ -49,7 +49,7 @@ export class cSyncService {
 
         // B) Configurar la IP de TU computadora (Servidor Web)
         // ⚠️ IMPORTANTE: Esta es la IP de tu PC (.188 según tus logs)
-        const MI_IP_PC = '10.38.52.61';
+        const MI_IP_PC = '192.168.1.10';
         const PUERTO_WEB = 6065;
 
         // Esta es la URL que la cámara intentará leer
@@ -293,29 +293,48 @@ export class cSyncService {
         } catch (e) { return []; }
     }
 
+    /**
+     * Método Radar Mejorado: 
+     * Detecta CUALQUIER rostro (Conocido o Desconocido) que aparezca frente a la cámara.
+     */
     async esperarNuevoEvento() {
-        console.log("📡 Radar activado: Esperando rostro desconocido (76)...");
-        let ultimaHora = "";
-
-        // Obtenemos estado inicial
+        console.log("📡 Radar activado: Escaneando cualquier rostro reciente...");
+        
+        let ultimaURL = "";
+        
+        // 1. Memorizamos la foto más reciente que tenga la cámara AHORA
         try {
             const historial = await this.obtenerUltimosEventos();
-            const ultimo = historial.find(e => e.minor === 76);
-            if (ultimo) ultimaHora = ultimo.time;
-        } catch (e) { }
+            if (historial.length > 0) {
+                ultimaURL = historial[0].pictureURL;
+            }
+        } catch (e) {}
 
-        for (let i = 0; i < 20; i++) {
+        const intentos = 20; // 30 segundos aprox.
+
+        for (let i = 0; i < intentos; i++) {
             await this._sleep(1500);
-            try {
-                const eventos = await this.obtenerUltimosEventos();
-                const candidato = eventos.find(e => e.minor === 76);
 
-                if (candidato && candidato.time !== ultimaHora) {
-                    console.log(`📸 ¡CAPTURA EXITOSA! ${candidato.time}`);
-                    return candidato;
+            try {
+                // 2. Consultamos los eventos
+                const eventos = await this.obtenerUltimosEventos();
+                
+                if (eventos.length > 0) {
+                    const masReciente = eventos[0]; // El primero es el más nuevo
+
+                    // 3. COMPARACIÓN:
+                    // Si la foto es distinta a la que vimos al inicio... ¡Es alguien nuevo!
+                    // (No importa si es ID 3, Desconocido, o ID 50)
+                    if (masReciente.pictureURL !== ultimaURL) {
+                        console.log(`📸 ¡CAPTURA EXITOSA! Rostro detectado: ${masReciente.name} a las ${masReciente.time}`);
+                        return masReciente;
+                    }
                 }
-            } catch (e) { }
+            } catch (e) {
+                process.stdout.write("."); // Feedback visual simple
+            }
         }
-        throw new Error("Tiempo agotado.");
+        
+        throw new Error("Tiempo agotado. Nadie pasó frente a la cámara.");
     }
 }

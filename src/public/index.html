@@ -538,47 +538,47 @@
                 async iniciarCapturaAlPaso() {
                     this.esperandoRostro = true;
                     this.fotoDetectada = null;
-                    this.abortController = new AbortController();
 
                     console.log("Esperando Evento Push");
 
                     const tiempoInicio = Date.now();
-                    const maxTiempoEspera = 30000;
+                    const maxEspera = 30000;
 
-                    const intervalo = setInterval(async () => {
+                    console.log("Esperando foto del servidor local")
+
+                    if(this.pollingInterval) clearInterval(this.pollingInterval); 
+
+                    this.pollingInterval = setInterval(async () => {
                         try {
-                            // 1. Consultamos a TU servidor (mucho más rápido)
                             const res = await fetch('/api/eventos/ultimo-local');
                             const evento = await res.json();
 
-                            // 2. Verificamos si hay evento y si es "fresco"
-                            // (Debe ser posterior a cuando dimos click)
-                            if (evento && evento.timestamp > tiempoInicio && evento.fotoUrl) {
-
-                                clearInterval(intervalo); // ¡Lo tenemos! Dejamos de buscar
-
+                            // Si hay evento, TIENE FOTO y es NUEVO (llegó después de que pulsé el botón)
+                            if (evento && evento.fotoUrl && evento.timestamp > tiempoInicio) {
+                                
+                                console.log("📸 ¡Foto recibida!", evento.fotoUrl);
+                                
+                                // Detenemos la búsqueda
+                                clearInterval(this.pollingInterval);
+                                
+                                // Mostramos la foto
                                 this.fotoDetectada = {
-                                    url: evento.fotoUrl, // URL local (/uploads/...)
+                                    url: evento.fotoUrl, // Ruta local (/uploads/...)
                                     originalUrl: evento.fotoUrl
                                 };
                                 this.esperandoRostro = false;
-                                console.log("📸 Foto recibida vía Push:", evento.fotoUrl);
                             }
 
-                            // Timeout
-                            if (Date.now() - tiempoInicio > maxTiempoEspera) {
-                                clearInterval(intervalo);
-                                this.esperandoRostro = false;
-                                alert("Tiempo agotado. No se recibió ningún evento del dispositivo.");
+                            // Si pasan 30 segundos, nos rendimos
+                            if (Date.now() - tiempoInicio > maxEspera) {
+                                this.cancelarEspera();
+                                alert("Tiempo agotado. No se recibió ninguna foto.");
                             }
 
                         } catch (e) {
                             console.error("Error consultando local:", e);
                         }
-                    }, 1000); // Revisar cada 1 segundo
-
-                    // Guardamos referencia al intervalo para poder cancelar
-                    this.pollingInterval = intervalo;
+                    }, 1000); 
                 },
 
                 cancelarEspera() {

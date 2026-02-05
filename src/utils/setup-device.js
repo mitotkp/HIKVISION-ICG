@@ -9,7 +9,7 @@ const HIK_DEVICE = {
 
 // --- 2. CONFIGURACIÓN DE TU SERVIDOR (NODE.JS) ---
 const MY_SERVER = {
-    ip: '10.38.52.61',
+    ip: '192.168.1.10',
     port: 6060,
     path: '/api/hikvision/event'
 };

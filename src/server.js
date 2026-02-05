@@ -96,6 +96,42 @@ app.delete('/api/cliente/:id/tarjeta/:cardNo', async (req, res) => {
     }
 });
 
+// --- RUTA FALTANTE PARA CAPTURA AL PASO (RADAR) ---
+app.get('/api/dispositivo/esperar-rostro', async (req, res) => {
+    try {
+        // Llamamos al método Radar que acabamos de corregir
+        const evento = await syncService.esperarNuevoEvento();
+        
+        // Enviamos la URL de la foto al frontend
+        res.json({
+            pictureURL: evento.pictureURL,
+            time: evento.time,
+            name: evento.name
+        });
+    } catch (e) {
+        // Si se acaba el tiempo (30s), enviamos error 408 (Timeout)
+        res.status(408).json({ error: e.message });
+    }
+});
+
+// Proxy de imagen (Para poder ver las fotos del dispositivo en la web sin problemas de CORS)
+app.get('/api/proxy-image', async (req, res) => {
+    try {
+        const imageUrl = req.query.url;
+        if (!imageUrl) return res.status(400).send('Falta URL');
+
+        // Descargamos la imagen del dispositivo
+        const response = await syncService.client.fetch(imageUrl);
+        if (!response.ok) throw new Error('No se pudo descargar imagen');
+
+        const buffer = await response.arrayBuffer();
+        res.set('Content-Type', 'image/jpeg');
+        res.send(Buffer.from(buffer));
+    } catch (e) {
+        res.status(500).send('Error proxy');
+    }
+});
+
 // Endpoint: Obtener Último Evento (Captura al Paso)
 app.get('/api/eventos/ultimo-local', (req, res) => {
     const evento = accessService.obtenerUltimoEvento();
