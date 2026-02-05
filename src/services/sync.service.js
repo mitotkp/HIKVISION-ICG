@@ -115,6 +115,54 @@ export class cSyncService {
         throw ultimoError || new Error("No se pudo subir la foto tras varios intentos.");
     }
 
+    // --- NUEVO MÉTODO: VERIFICAR SI TIENE ROSTRO (BUSCAR EN DISPOSITIVO) ---
+    async verificarRostro(userId) {
+        console.log(`🔎 Verificando rostro para ID: ${userId}...`);
+        
+        const targetUrl = `${this.baseUrl}/ISAPI/Intelligent/FDLib/FDSearch?format=json`;
+        
+        const payload = {
+            FDSearchDescription: {
+                searchID: "SearchFace_" + Date.now(),
+                FDID: "1", // ID de librería por defecto
+                FPID: String(userId), // Buscamos por ID de usuario
+                maxResults: 10,
+                searchResultPosition: 0
+            }
+        };
+
+        try {
+            const response = await this.client.fetch(targetUrl, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            const data = await response.json();
+
+            // Si hay coincidencias (numOfMatches > 0), es que tiene foto
+            if (data.FDSearchResult && data.FDSearchResult.numOfMatches > 0) {
+                console.log(`   ✅ El usuario ${userId} TIENE foto registrada.`);
+                // Intentamos obtener la URL si el dispositivo la devuelve
+                const match = data.FDSearchResult.MatchList[0] || {};
+                return { 
+                    hasFace: true, 
+                    // Nota: Hikvision no suele devolver la imagen completa aquí, 
+                    // pero confirmamos que existe.
+                    faceUrl: match.faceURL || null 
+                };
+            }
+            
+            console.log(`   ℹ️ El usuario ${userId} NO tiene foto.`);
+            return { hasFace: false };
+
+        } catch (error) {
+            // Si el dispositivo no soporta FDSearch o falla, asumimos false
+            console.error('Error verificando rostro:', error.message);
+            return { hasFace: false };
+        }
+    }
+
     // --- NUEVO MÉTODO: ELIMINAR ROSTRO ---
     async eliminarRostro(userId) {
         console.log(`🗑️ Eliminando foto del usuario ${userId}...`);

@@ -438,33 +438,52 @@
                 async abrirModal(cliente) {
                     this.clienteSeleccionado = cliente;
                     this.tarjetaInput = '';
-                    this.fotoActualUrl = null; // Reiniciamos visualización
+                    this.fotoActualUrl = null; 
                     this.cancelarEspera(); 
 
-                    // Intentar cargar la foto actual (simulado o consulta)
-                    // Por ahora reseteamos a null para que salga el placeholder
-                    // Si tuviéramos persistencia, aquí haríamos fetch(`/api/cliente/${cliente.CODCLIENTE}/foto`)
-
+                    // 1. CARGAR TARJETAS (Ya lo tenías)
                     if (cliente.tarjetasDispositivo !== undefined) {
                         this.clienteSeleccionado.tarjetas = cliente.tarjetasDispositivo;
-                        return;
+                    } else {
+                        this.cargandoTarjetas = true;
+                        try {
+                            const res = await fetch(`/api/cliente/${cliente.CODCLIENTE}/tarjetas`);
+                            const data = await res.json();
+                            cliente.tarjetas = data.tarjetas || [];
+                            cliente.tarjetasDispositivo = data.tarjetas;
+                        } catch (e) {
+                            console.error(e);
+                        } finally {
+                            this.cargandoTarjetas = false;
+                        }
                     }
 
-                    this.cargandoTarjetas = true;
-                    try {
-                        const res = await fetch(`/api/cliente/${cliente.CODCLIENTE}/tarjetas`);
-                        const data = await res.json();
-                        cliente.tarjetas = data.tarjetas || [];
-                        cliente.tarjetasDispositivo = data.tarjetas;
-                    } catch (e) {
-                        alert("Error leyendo tarjetas.");
-                    } finally {
-                        this.cargandoTarjetas = false;
-                    }
+                    // 2. NUEVO: CARGAR ESTADO DE FOTO DESDE EL DISPOSITIVO
+                    this.cargarEstadoFoto(cliente.CODCLIENTE);
                 },
                 cerrarModal() {
                     this.cancelarEspera();
                     this.clienteSeleccionado = null;
+                },
+                async cargarEstadoFoto(id) {
+                    // Ponemos un placeholder de carga si quieres, o null
+                    this.fotoActualUrl = null;
+                    
+                    try {
+                        const res = await fetch(`/api/cliente/${id}/foto`);
+                        const data = await res.json();
+                        
+                        if (data.hasPhoto) {
+                            // Si tiene foto, mostramos un indicador visual o la URL si existe
+                            // Usamos un placeholder "dummy" para activar la UI de "Foto Existe"
+                            // Si data.photoUrl existe y es accesible, úsala. Si no, usa una genérica.
+                            this.fotoActualUrl = data.photoUrl || 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'; 
+                        } else {
+                            this.fotoActualUrl = null;
+                        }
+                    } catch (e) {
+                        console.error("Error verificando foto:", e);
+                    }
                 },
 
                 // --- FOTOS: MÉTODOS "AL PASO" ---
@@ -564,7 +583,7 @@
                         const data = await res.json();
                         if (data.success) {
                             alert("🗑️ Foto eliminada correctamente.");
-                            this.fotoActualUrl = null; // Quitar visualización
+                            this.fotoActualUrl = null; // <--- Ocultar foto inmediatamente
                         } else {
                             alert("❌ Error: " + (data.error || "No se pudo eliminar"));
                         }

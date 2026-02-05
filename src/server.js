@@ -136,19 +136,20 @@ app.get('/api/proxy-image', async (req, res) => {
 app.get('/api/cliente/:id/foto', async (req, res) => {
     try {
         const userId = req.params.id;
-        // Usamos el método Radar para buscar el último evento de este usuario
-        // Si tiene foto reciente, la devolvemos
-        const eventos = await syncService.obtenerUltimosEventos();
+        // Consultamos directamente al dispositivo
+        const resultado = await syncService.verificarRostro(userId);
         
-        // Buscamos un evento (75=Conocido) que coincida con el nombre/ID del cliente
-        // Nota: Esto es una aproximación. Hikvision no tiene un endpoint directo fácil para "ver foto actual".
-        // Lo ideal es guardar la URL de la foto en tu base de datos SQL cuando la subes.
-        
-        // POR AHORA: Devolvemos 404 para que el frontend use la default.
-        // (Implementaremos la solución real en el paso 3)
-        res.status(404).json({ hasPhoto: false });
+        res.json({ 
+            hasPhoto: resultado.hasFace,
+            // Si el dispositivo devolviera una URL válida, la pasaríamos.
+            // Si no, enviamos null y el frontend pondrá un placeholder.
+            photoUrl: resultado.faceUrl 
+        });
 
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { 
+        console.error("Error API Foto:", e.message);
+        res.status(500).json({ error: e.message }); 
+    }
 });
 
 // --- NUEVA RUTA: BORRAR FOTO ---
